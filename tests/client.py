@@ -24,17 +24,18 @@ class Client:
         self.notifications = []
         self.lines: queue.Queue = queue.Queue()
         self.stderr_lines: list[str] = []
-        threading.Thread(target=self._pump, args=(self.p.stdout, self.lines.put), daemon=True).start()
+        threading.Thread(target=self._pump, args=(self.p.stdout, self.lines.put, True), daemon=True).start()
         threading.Thread(target=self._pump, args=(self.p.stderr, self.stderr_lines.append), daemon=True).start()   # FABLE 16:58: drained
 
     @staticmethod
-    def _pump(stream, sink):
+    def _pump(stream, sink, end_marker=False):
         try:
             for line in stream:
                 sink(line)
         except (ValueError, OSError):
             pass
-        sink(None) if sink.__name__ == "put" else None
+        if end_marker:                                       # the stdout pump marks the end of output (FABLE 17:30 nit: plainer)
+            sink(None)
 
     def send(self, obj):
         self.p.stdin.write((obj if isinstance(obj, str) else json.dumps(obj)) + "\n")
@@ -81,6 +82,27 @@ class Client:
         if meta:
             params["_meta"] = meta
         return self.call("tools/call", params)
+
+    def wait_notification(self, method: str, timeout: float = 5.0) -> bool:
+        """True when a notification `method` arrives within `timeout`, WITHOUT sending anything (a server that hands notifications on
+        only when asked something is not 'as it arrives')."""
+        import time as _t
+        if any(n.get("method") == method for n in self.notifications):
+            return True
+        end = _t.monotonic() + timeout
+        while _t.monotonic() < end:
+            try:
+                line = self.lines.get(timeout=max(0.05, end - _t.monotonic()))
+            except queue.Empty:
+                return False
+            if line is None:
+                return False
+            msg = json.loads(line)
+            if isinstance(msg, dict) and "id" not in msg and "method" in msg:
+                self.notifications.append(msg)
+                if msg.get("method") == method:
+                    return True
+        return False
 
     def rest(self, timeout: float = 5.0) -> list[str]:
         """Every line the server still writes until it closes its stdout (after stdin is closed)."""

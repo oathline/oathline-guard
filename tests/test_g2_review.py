@@ -93,6 +93,50 @@ class R4_ListChanged(ReviewCase):
         self.assertNotIn({"call": "new_tool"}, self.upstream_log())
 
 
+class R4b_AsItArrives(ReviewCase):
+    """FABLE 17:30: 'as it arrives' tested for real. The upstream sends list_changed AFTER its answer; the client then sends nothing,
+    and must still receive the notification (a Guard that hands notifications on only at its next upstream call is red here).
+    The 'early' mode (notification before the answer) is kept too: it must reach the client by the time the answer does."""
+
+    def test_r4b_after_the_answer_with_no_further_request(self):
+        g = self.guard("grows", ["read_a"])
+        g.start()
+        g.tool("read_a")
+        self.assertTrue(g.wait_notification("notifications/tools/list_changed", timeout=5))
+
+    def test_r4c_before_the_answer(self):
+        g = self.guard("early", ["read_a"])
+        g.start()
+        g.tool("read_a")
+        self.assertIn("notifications/tools/list_changed", [n.get("method") for n in g.notifications])
+
+
+class R3a_UpstreamGoesMute(ReviewCase):
+    def test_r3a_closed_output_alive_process(self):
+        g = self.guard("mute", ["read_a"])
+        g.start()
+        self.assertIn("error", g.tool("read_a"))
+        self.assertEqual(g.p.wait(timeout=15), 1)            # not a zombie: the upstream's output is gone, the Guard exits
+
+
+class R3b_UpstreamDiesIdle(ReviewCase):
+    def test_r3b_idle_death_is_noticed_without_a_call(self):
+        g = self.guard("idle", ["read_a"])
+        g.start()
+        g.tools()
+        self.assertEqual(g.p.wait(timeout=15), 1)            # nothing sent after the upstream died: the Guard exits on its own
+
+
+class R6_NotificationBeforeInitialize(ReviewCase):
+    def test_r6_the_initialize_answer_comes_first(self):
+        g = self.guard("chatty", ["read_a"])
+        r = g.start()                                         # whatever the upstream sent before, the first line is the answer
+        self.assertIn("result", r)
+        self.assertEqual(g.notifications, [])                # held back until the client's initialize was answered
+        g.tools()                                             # then handed on
+        self.assertIn("notifications/message", [n.get("method") for n in g.notifications])
+
+
 class R5_BadName(ReviewCase):
     def test_r5(self):
         g = self.guard("pages", ["read_a"])
