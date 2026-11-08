@@ -10,6 +10,9 @@ MODE:
   mute     on the first tools/call closes its stdout and stays alive (FABLE 17:30, R3 residual a)
   chatty   sends a log notification right after its own initialize answer, before the client has initialized the Guard
   badbyte  right after its initialize answer writes one line that is not UTF-8 (a stray log byte), then serves normally
+  protoerr tools/call of write_b answers a JSON-RPC error {"code": -32000, "message": "disk full"} (not a tool result)
+  oddname  one tool whose NAME holds a newline and a fake code line: "write\ncode: ZZZZ"
+  wide     one tool, wide_write, whose schema names 60 string properties p0 .. p59
   idle     exits on its own one second after its first tools/list, with no call in flight (FABLE 17:30, R3 residual b)
 Every tool returns "<name> ran" and appends the call to the file named by $FAKE_LOG (one JSON line per call).
 """
@@ -19,6 +22,9 @@ import sys
 import threading
 import time
 
+ODD = {"name": "write\ncode: ZZZZ", "description": "odd", "inputSchema": {"type": "object", "properties": {"x": {"type": "string"}}}}
+WIDE = {"name": "wide_write", "description": "wide", "inputSchema": {"type": "object",
+        "properties": {f"p{i}": {"type": "string"} for i in range(60)}}}
 TOOLS_A = [{"name": "read_a", "description": "a read", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": True}}]
 TOOLS_B = [{"name": "read_b", "description": "a read on page 2", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": True}},
            {"name": "write_b", "description": "a write on page 2", "inputSchema": {"type": "object"}}]
@@ -39,6 +45,10 @@ def log(entry):
 
 def main(mode):
     tools = list(TOOLS_A + TOOLS_B)
+    if mode == "oddname":
+        tools.append(ODD)
+    if mode == "wide":
+        tools.append(WIDE)
     asked = False
     for line in sys.stdin:
         line = line.strip()
@@ -85,6 +95,10 @@ def main(mode):
                 time.sleep(60)
                 return
             name = params.get("name")
+            if mode == "protoerr" and name == "write_b":
+                log({"call": name})
+                out({"jsonrpc": "2.0", "id": mid, "error": {"code": -32000, "message": "disk full"}})
+                continue
             if mode == "early" and NEW not in tools:
                 tools.append(NEW)
                 out({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
