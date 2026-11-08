@@ -9,6 +9,7 @@ MODE:
   early    like grows, but sends list_changed BEFORE its tools/call answer (the client must see it first: "as it arrives")
   mute     on the first tools/call closes its stdout and stays alive (FABLE 17:30, R3 residual a)
   chatty   sends a log notification right after its own initialize answer, before the client has initialized the Guard
+  badbyte  right after its initialize answer writes one line that is not UTF-8 (a stray log byte), then serves normally
   idle     exits on its own one second after its first tools/list, with no call in flight (FABLE 17:30, R3 residual b)
 Every tool returns "<name> ran" and appends the call to the file named by $FAKE_LOG (one JSON line per call).
 """
@@ -54,6 +55,11 @@ def main(mode):
             out({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2025-06-18",
                                                          "capabilities": {"tools": {"listChanged": True}},
                                                          "serverInfo": {"name": f"fake-{mode}", "version": "0"}}})
+            if mode == "badbyte":
+                sys.stdout.flush()
+                sys.stdout.buffer.write(b"ÿþ stray bytes from a log line
+")
+                sys.stdout.buffer.flush()
             if mode == "chatty":
                 out({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "data": "hello early"}})
         elif method == "tools/list":

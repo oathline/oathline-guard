@@ -137,6 +137,25 @@ class R6_NotificationBeforeInitialize(ReviewCase):
         self.assertIn("notifications/message", [n.get("method") for n in g.notifications])
 
 
+class R7_ThirdCheckNits(ReviewCase):
+    """FABLE 18:00 nits: a stray undecodable line from a healthy upstream is skipped, not the end of the Guard; a client that never
+    sends initialize (ping first) still gets the held notifications after its first answer."""
+
+    def test_r7a_one_bad_byte_is_not_the_end(self):
+        g = self.guard("badbyte", ["read_a"])
+        g.start()
+        self.assertFalse(g.tool("read_a")["result"]["isError"])
+        import time
+        time.sleep(1.6)                                       # longer than the end-of-output grace
+        self.assertIn("result", g.call("ping"))
+        self.assertIsNone(g.p.poll())
+
+    def test_r7b_held_notifications_reach_a_client_that_pings_first(self):
+        g = self.guard("chatty", ["read_a"])
+        self.assertIn("result", g.call("ping"))               # no initialize from this client
+        self.assertTrue(g.wait_notification("notifications/message", timeout=5))
+
+
 class R5_BadName(ReviewCase):
     def test_r5(self):
         g = self.guard("pages", ["read_a"])
