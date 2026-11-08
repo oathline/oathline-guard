@@ -130,7 +130,9 @@ class K6_QuickstartIsReal(unittest.TestCase):
 
     def test_k6_commands(self):
         from oathline_guard.__main__ import main
-        named = set(re.findall(r"oathline-guard (\w+)", read("README.md")))
+        text = read("README.md")                      # the commands as a reader types them: a code line, or inline code
+        code = "\n".join(re.findall(r"```\w*\n(.*?)```", text, re.S))
+        named = set(re.findall(r"(?m)^oathline-guard (\w+)", code)) | set(re.findall(r"`oathline-guard (\w+)", text))
         self.assertTrue(named)
         for cmd in named:
             self.assertIn(cmd, ("run", "approve"), cmd)

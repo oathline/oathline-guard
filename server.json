@@ -1,0 +1,62 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.oathline/oathline-guard",
+  "title": "Oathline Guard",
+  "description": "Wraps a stdio MCP server: reads pass, every other tool call waits for a person's coded yes.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/oathline/oathline-guard",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/oathline/oathline-guard",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "oathline-guard",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "run"
+        },
+        {
+          "type": "named",
+          "name": "--server",
+          "description": "A short name for the guarded server; the approve window uses the same name",
+          "isRequired": true,
+          "valueHint": "server_name"
+        },
+        {
+          "type": "named",
+          "name": "--reads",
+          "description": "A JSON file listing the tools that pass without a yes; without it nothing passes",
+          "isRequired": true,
+          "valueHint": "reads_json"
+        },
+        {
+          "type": "named",
+          "name": "--human",
+          "description": "The person whose typed code runs a held call",
+          "isRequired": true,
+          "valueHint": "person_name"
+        },
+        {
+          "type": "positional",
+          "value": "--"
+        },
+        {
+          "type": "positional",
+          "description": "The real MCP server's command and its arguments",
+          "isRequired": true,
+          "isRepeated": true,
+          "valueHint": "server_command"
+        }
+      ]
+    }
+  ]
+}

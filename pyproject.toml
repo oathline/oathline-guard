@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oathline-guard"
+version = "0.1.0"
+description = "An MCP guard where an AI agent's yes means exactly what the person saw: reads pass, every other tool call waits for a coded yes in a second terminal, runs once, and is recorded in Oathline's hash-chained log."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Nexxt Nest Group Pty Ltd" }]
+requires-python = ">=3.10"
+dependencies = ["oathline>=0.2.0,<0.3"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+]
+
+[project.scripts]
+oathline-guard = "oathline_guard.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/oathline/oathline-guard"
+Repository = "https://github.com/oathline/oathline-guard"
+Issues = "https://github.com/oathline/oathline-guard/issues"
+Changelog = "https://github.com/oathline/oathline-guard/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["oathline_guard", "oathline_guard.demo"]

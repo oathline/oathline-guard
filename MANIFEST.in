@@ -1,0 +1,5 @@
+prune tests
+prune examples
+prune .github
+exclude CHANGELOG.md SECURITY.md .gitignore MANIFEST.in server.json
+exclude RELEASE_NOTES_0.1.0.md
