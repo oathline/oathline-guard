@@ -78,7 +78,7 @@ class PocketOSQuickstart(unittest.TestCase):
     def oathline_agent(self, *argv):
         self.assertTrue(os.path.isdir(os.path.join(AGENT_REPO, "oathline_agent")),
                         f"the quickstart needs the oathline-agent repo: set OATHLINE_AGENT_PATH (looked in {AGENT_REPO})")
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join([_core.CORE, AGENT_REPO, _core.ROOT]), PYTHONIOENCODING="utf-8",
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([AGENT_REPO, _core.ROOT]), PYTHONIOENCODING="utf-8",
                    OATHLINE_GUARD_HOME=self.home, OATHLINE_GUARD_SERVER="db")
         folder = os.path.join(self.home, "db")
         p = subprocess.run([sys.executable, "-m", "oathline_agent", "--audit", os.path.join(folder, "audit.db"), "--tokens",
@@ -156,7 +156,7 @@ class PocketOSQuickstart(unittest.TestCase):
 
 class TheExample(unittest.TestCase):
     def test_examples_stop_the_delete_runs(self):
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join([_core.CORE, _core.ROOT]), PYTHONIOENCODING="utf-8")
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([_core.ROOT]), PYTHONIOENCODING="utf-8")
         p = subprocess.run([sys.executable, os.path.join(_core.ROOT, "examples", "stop_the_delete.py")], capture_output=True,
                            text=True, encoding="utf-8", env=env, timeout=180, cwd=_core.ROOT)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
