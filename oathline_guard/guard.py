@@ -7,7 +7,8 @@ held: in G2 it is simply not run; from G3 it becomes a heard proposal. No read l
 
 The upstream is read by its own thread (FABLE 16:58 review): a request FROM the upstream (roots/list, sampling, elicitation) is
 answered -32601 at once, never left to deadlock the Guard; a notification is handed to the client as it arrives; a response goes to
-the one call waiting for it. When the upstream dies the Guard says so and exits, so the client can restart it.
+the one call waiting for it. When the upstream's output ends (it died, it closed its stdout while alive, or it wrote what cannot be read), the Guard answers any
+call in flight with the error, kills it and exits 1 within about a second, even with no call in flight, so the client can restart it.
 Limit until G5: no timeout on an upstream call (a hung upstream hangs the serial loop, ping included).
 """
 from __future__ import annotations
@@ -34,7 +35,7 @@ class UpstreamError(Exception):
 class Upstream:
     """The real MCP server, spawned with its own command; spoken to over its stdio (LF only, UTF-8), read by its own thread."""
 
-    def __init__(self, argv: list[str], on_notification=None):
+    def __init__(self, argv: list[str], on_notification=None, on_end=None):
         if not argv:
             raise UpstreamError("no upstream command after --")
         exe = shutil.which(argv[0]) or argv[0]               # FABLE 16:58 nit: `npx` and friends on Windows
@@ -44,6 +45,8 @@ class Upstream:
         self.lock = threading.Lock()
         self.responses: queue.Queue = queue.Queue()
         self.on_notification = on_notification or (lambda msg: None)
+        self.on_end = on_end or (lambda: None)
+        self.ended = threading.Event()
         self.n = 0
         threading.Thread(target=self._read, daemon=True).start()
 
@@ -68,9 +71,11 @@ class Upstream:
                     self.on_notification(got)
                 elif "id" in got:
                     self.responses.put(got)
-        except (OSError, ValueError):
+        except (OSError, ValueError):                       # incl. UnicodeDecodeError: an upstream we cannot read is ended too
             pass
+        self.ended.set()
         self.responses.put(None)                              # the upstream closed its output
+        self.on_end()
 
     def call(self, method: str, params=None) -> dict:
         self.n += 1
@@ -93,6 +98,12 @@ class Upstream:
 
     def notify(self, method: str, params=None) -> None:
         self._send({"jsonrpc": "2.0", "method": method, **({"params": params} if params is not None else {})})
+
+    def kill(self) -> None:
+        try:
+            self.p.kill()
+        except Exception:  # noqa: BLE001
+            pass
 
     def dead(self) -> bool:
         try:
@@ -134,12 +145,21 @@ class Guard:
         self.out = stdout or sys.stdout
         self.out_lock = threading.Lock()
         os.makedirs(home, exist_ok=True)
+        # tool_names is rebound by the reader thread (list_changed) and added to by the main thread WITHOUT a lock, on purpose: every
+        # interleaving is fail-closed or self-healing (an unknown name triggers a full refresh before anything is forwarded).
         self.tool_names: set = set()
-        self.up = Upstream(upstream_argv, on_notification=self._upstream_notification)
-        init = self.up.call("initialize", {"protocolVersion": stdio.PROTOCOL_VERSIONS[0], "capabilities": {},
-                                          "clientInfo": {"name": "oathline-guard", "version": __version__}})
-        if "result" not in init:
-            raise UpstreamError(f"the upstream server refused initialize: {init.get('error')}")
+        self.client_initialized = False
+        self.closing = False
+        self.pending_notes: list[dict] = []                     # upstream notifications held until the client's initialize is answered
+        self.up = Upstream(upstream_argv, on_notification=self._upstream_notification, on_end=self._upstream_ended)
+        try:
+            init = self.up.call("initialize", {"protocolVersion": stdio.PROTOCOL_VERSIONS[0], "capabilities": {},
+                                              "clientInfo": {"name": "oathline-guard", "version": __version__}})
+            if "result" not in init:
+                raise UpstreamError(f"the upstream server refused initialize: {init.get('error')}")
+        except BaseException:
+            self.up.close()                                   # FABLE 17:30 nit: never left running after a failed start
+            raise
         self.upstream_info = init["result"].get("serverInfo", {})
         self.upstream_caps = init["result"].get("capabilities") or {}
         self.up.notify("notifications/initialized")
@@ -153,7 +173,29 @@ class Guard:
     def _upstream_notification(self, msg: dict) -> None:
         if msg.get("method") == "notifications/tools/list_changed":
             self.tool_names = set()                               # learnt again on next use; a new tool is held: not on the read list
-        self._write(msg)
+        with self.out_lock:
+            if not self.client_initialized:                       # FABLE 17:30 nit: the initialize answer is the client's first line
+                self.pending_notes.append(msg)
+                return
+            stdio.write(self.out, msg)
+
+    def _upstream_ended(self) -> None:
+        """The upstream's output ended (it died, or closed its stdout, or wrote what we cannot read): it can never answer again. An
+        in-flight call answers its error first; then the Guard exits so the client can restart it (FABLE 17:30, R3 residuals)."""
+        def finish():
+            import time as _t
+            _t.sleep(1.0)                                         # let a call that was waiting write its error line
+            if self.closing:                                      # a normal shutdown closed the upstream: not a failure
+                return
+            self.up.kill()
+            print("oathline-guard: the upstream server's output ended; exiting", file=sys.stderr)
+            try:
+                with self.out_lock:
+                    self.out.flush()
+            except Exception:  # noqa: BLE001
+                pass
+            os._exit(1)
+        threading.Thread(target=finish, daemon=True).start()
 
     def refresh_tools(self) -> None:
         """Every page of the upstream's tools (the Guard must know them all to say "unknown tool" truthfully)."""
@@ -236,14 +278,21 @@ class Guard:
                 resp = self.handle(msg)
             except UpstreamError as exc:
                 self._write(stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32603, f"upstream: {exc}"))
-                if self.up.dead():                               # FABLE 16:58: a dead upstream ends the Guard; the client restarts it
-                    print(f"oathline-guard: the upstream server exited ({self.up.p.returncode}); exiting", file=sys.stderr)
+                if self.up.ended.is_set() or self.up.dead():   # output gone (dead, or alive but mute: FABLE 17:30): never usable again
+                    self.up.kill()
+                    print("oathline-guard: the upstream server can no longer answer; exiting", file=sys.stderr)
                     return 1
                 continue
             except Exception as exc:  # noqa: BLE001 - never die on one message
                 resp = stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32603, f"internal error: {type(exc).__name__}")
             if resp is not None:
                 self._write(resp)
+            if isinstance(msg, dict) and msg.get("method") == "initialize" and not self.client_initialized:
+                with self.out_lock:                               # the answer is out: now the held notifications
+                    self.client_initialized = True
+                    for note in self.pending_notes:
+                        stdio.write(self.out, note)
+                    self.pending_notes.clear()
 
 
 def run(argv: list[str]) -> int:
@@ -273,4 +322,5 @@ def run(argv: list[str]) -> int:
         return 2
     finally:
         if guard is not None:
+            guard.closing = True
             guard.up.close()
