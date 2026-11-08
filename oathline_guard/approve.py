@@ -50,10 +50,10 @@ def _can_display(text: str, out) -> bool:
         return False
 
 
-def window(rec: Record, *, ask, out, isatty=_stdin_is_terminal, once: bool = False, poll: float = 1.0, max_rounds=None) -> int:
+def window(rec: Record, *, ask, out, isatty=None, once: bool = False, poll: float = 1.0, max_rounds=None) -> int:
     """Answer the waiting calls; with once=True those waiting now, then return; max_rounds bounds the loop (tests). -> how many
     calls were answered. `ask(prompt, call) -> str` reads one line from the person; `out` is where the text is printed."""
-    if not isatty():
+    if not (isatty if isatty is not None else _stdin_is_terminal)():   # resolved when called (FABLE 21:17)
         raise NotATerminal("the code must be typed by a person at a terminal; stdin is not one")
     human = rec.human
     answered, rounds = 0, 0

@@ -347,14 +347,24 @@ class Record:
 
     def no(self, call: str, human: str) -> None:
         """The person's no: a RECORDED outcome (guard.db), and the Guard's own event REFUSED_BY_HUMAN on Core's chain beside SHOWN and
-        HEARD (FABLE 20:29: so Core's why() for the token says the person refused it); any later yes is too late."""
+        HEARD (FABLE 20:29: so Core's why() for the token says the person refused it); any later yes is too late.
+        REFUSED_BY_HUMAN is the Guard's OWN event type, appended with AuditLog.append because Core has no verb for a product's
+        refusal; Core's readers treat an event type they do not know as data (FABLE 21:17). It is written only while the call is
+        still pending (an expiry between the showing and the typed n writes nothing for the expired token), and names the call and the
+        channel as SHOWN and HEARD do."""
         row = self._row(call)
+        if row["status"] == "pending" and self._expired(row):
+            self._resolve(call, "expired", {"state": "expired"})
+            return
+        if row["status"] != "pending":
+            return
         cur = self.db.execute("INSERT OR IGNORE INTO answers (call, kind, code_typed, human, at) VALUES (?, 'no', NULL, ?, ?)",
                               (call, str(human), self.clock()))
         self._resolve(call, "refused", {"state": "refused_by_human", "by": str(human)})
         if cur.rowcount == 1:
             self.engine().audit.append("REFUSED_BY_HUMAN", PRODUCT, self.capability(row["tool"]),
-                                       {"token": row["token"], "reason": "the person said no", "by": str(human)})
+                                       {"token": row["token"], "call": call, "channel": "screen", "reason": "the person said no",
+                                        "by": str(human)})
 
     def answer(self, call: str) -> dict | None:
         r = self.db.execute("SELECT kind, code_typed, human, at FROM answers WHERE call=?", (call,)).fetchone()
