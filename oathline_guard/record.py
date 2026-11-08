@@ -83,6 +83,15 @@ def one_line(v) -> str:
     return _escape_unprintable(lit)
 
 
+def server_name_ok(name) -> bool:
+    """One plain name for a guarded server (FABLE 19:29 / 20:01): it heads the shown text ('<server> / <tool>'), names the
+    capabilities (mcp/<server>/<tool>) and a folder under --home, so no '/', no spaces, no leading '.'. The run side and the approve
+    window both use this rule."""
+    if not isinstance(name, str) or not 1 <= len(name) <= 64 or not (name[0].isascii() and name[0].isalnum()):
+        return False
+    return all((ch.isascii() and ch.isalnum()) or ch in "_.-" for ch in name)
+
+
 def _carried(v) -> bool:
     return isinstance(v, dict) and set(v) == {"sha256", "chars"}
 
@@ -252,7 +261,17 @@ class Record:
     def code(self, call: str) -> str:
         return self._row(call)["code"]
 
+    def expire_due(self) -> list[str]:
+        """Resolve every pending call past its lifetime as expired (FABLE 20:01: never shown, its code never printed). -> the calls."""
+        due = [c for (c, created) in self.db.execute("SELECT call, created FROM calls WHERE status='pending'")
+               if self.clock() > created + TTL_SECONDS]
+        for c in due:
+            self._resolve(c, "expired", {"state": "expired"})
+        return due
+
     def pending(self) -> list[dict]:
+        """The calls waiting for an answer and still alive (an expired one is resolved, not listed)."""
+        self.expire_due()
         return [self._row(c) for (c,) in self.db.execute("SELECT call FROM calls WHERE status='pending' ORDER BY created")]
 
     def match(self, tool: str, arguments: dict) -> dict | None:

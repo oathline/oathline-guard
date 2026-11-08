@@ -383,8 +383,8 @@ def run(argv: list[str]) -> int:
     ap.add_argument("--human", help="the person whose yes runs a held call (a Core human; never an agent's name)")
     ap.add_argument("--shown-text", action="store_true", help="keep the shown words in the chain (D6; default: their hash only)")
     a = ap.parse_args(ours)
-    import re as _re
-    if not _re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", a.server or ""):   # FABLE 19:29 (a): one plain name, no "/", no spaces
+    from .record import server_name_ok
+    if not server_name_ok(a.server):                         # FABLE 19:29 (a): one plain name, no "/", no spaces (shared with approve)
         print(f"oathline-guard: --server {a.server!r} must be one plain name (letters, digits, '_', '.', '-'); it heads the "
               "shown text and names the capabilities", file=sys.stderr)
         return 2
