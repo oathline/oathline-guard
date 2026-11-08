@@ -24,6 +24,7 @@ import threading
 
 from . import __version__, stdio
 
+PENDING_MAX = 1000                                                      # upstream notifications held before the client's first answer
 PASS_METHODS = {"resources/list": "resources", "resources/read": "resources", "resources/templates/list": "resources",
                 "prompts/list": "prompts", "prompts/get": "prompts"}   # reads (plan section 3), passed only if the upstream offers them
 
@@ -41,7 +42,9 @@ class Upstream:
         exe = shutil.which(argv[0]) or argv[0]               # FABLE 16:58 nit: `npx` and friends on Windows
         self.p = subprocess.Popen([exe, *argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None)
         self.stdin = io.TextIOWrapper(self.p.stdin, encoding="utf-8", newline="\n", write_through=True)   # LF only, never CRLF
-        self.stdout = io.TextIOWrapper(self.p.stdout, encoding="utf-8", newline="\n")
+        # errors="replace" (FABLE 18:00): a stray undecodable byte makes its line a parse error that _read skips, not the end of
+        # the upstream; valid JSON carrying U+FFFD still parses
+        self.stdout = io.TextIOWrapper(self.p.stdout, encoding="utf-8", errors="replace", newline="\n")
         self.lock = threading.Lock()
         self.responses: queue.Queue = queue.Queue()
         self.on_notification = on_notification or (lambda msg: None)
@@ -150,20 +153,21 @@ class Guard:
         self.tool_names: set = set()
         self.client_initialized = False
         self.closing = False
-        self.pending_notes: list[dict] = []                     # upstream notifications held until the client's initialize is answered
+        self.pending_notes: list[dict] = []                     # upstream notifications held until the client's FIRST answer
+        self.dropped_notes = 0
         self.up = Upstream(upstream_argv, on_notification=self._upstream_notification, on_end=self._upstream_ended)
         try:
             init = self.up.call("initialize", {"protocolVersion": stdio.PROTOCOL_VERSIONS[0], "capabilities": {},
                                               "clientInfo": {"name": "oathline-guard", "version": __version__}})
             if "result" not in init:
                 raise UpstreamError(f"the upstream server refused initialize: {init.get('error')}")
+            self.upstream_info = init["result"].get("serverInfo", {})
+            self.upstream_caps = init["result"].get("capabilities") or {}
+            self.up.notify("notifications/initialized")
+            self.refresh_tools()
         except BaseException:
-            self.up.close()                                   # FABLE 17:30 nit: never left running after a failed start
+            self.up.close()                                   # FABLE 17:30 / 18:00 nits: never left running after a failed start
             raise
-        self.upstream_info = init["result"].get("serverInfo", {})
-        self.upstream_caps = init["result"].get("capabilities") or {}
-        self.up.notify("notifications/initialized")
-        self.refresh_tools()
 
     # ---------------------------------------------------------------- the upstream's side
     def _write(self, msg) -> None:
@@ -174,7 +178,13 @@ class Guard:
         if msg.get("method") == "notifications/tools/list_changed":
             self.tool_names = set()                               # learnt again on next use; a new tool is held: not on the read list
         with self.out_lock:
-            if not self.client_initialized:                       # FABLE 17:30 nit: the initialize answer is the client's first line
+            if not self.client_initialized:                       # FABLE 17:30 nit: the client's first answer is its first line
+                if len(self.pending_notes) >= PENDING_MAX:        # FABLE 18:00 nit: bounded; the oldest goes, said once on stderr
+                    self.pending_notes.pop(0)
+                    if not self.dropped_notes:
+                        print(f"oathline-guard: more than {PENDING_MAX} upstream notifications before the client's first answer; "
+                              "dropping the oldest", file=sys.stderr)
+                    self.dropped_notes += 1
                 self.pending_notes.append(msg)
                 return
             stdio.write(self.out, msg)
@@ -287,7 +297,7 @@ class Guard:
                 resp = stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32603, f"internal error: {type(exc).__name__}")
             if resp is not None:
                 self._write(resp)
-            if isinstance(msg, dict) and msg.get("method") == "initialize" and not self.client_initialized:
+            if resp is not None and not self.client_initialized:  # the FIRST answer is out (initialize, or a ping first: FABLE 18:00)
                 with self.out_lock:                               # the answer is out: now the held notifications
                     self.client_initialized = True
                     for note in self.pending_notes:
