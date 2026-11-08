@@ -2,8 +2,10 @@
 no way to answer an approval (the approval is the human's, in another process)."""
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 
 from tests import _core
 
@@ -20,16 +22,34 @@ class Client:
                                   encoding="utf-8", cwd=cwd or _core.ROOT, env=e)
         self.n = 0
         self.notifications = []
+        self.lines: queue.Queue = queue.Queue()
+        self.stderr_lines: list[str] = []
+        threading.Thread(target=self._pump, args=(self.p.stdout, self.lines.put), daemon=True).start()
+        threading.Thread(target=self._pump, args=(self.p.stderr, self.stderr_lines.append), daemon=True).start()   # FABLE 16:58: drained
+
+    @staticmethod
+    def _pump(stream, sink):
+        try:
+            for line in stream:
+                sink(line)
+        except (ValueError, OSError):
+            pass
+        sink(None) if sink.__name__ == "put" else None
 
     def send(self, obj):
         self.p.stdin.write((obj if isinstance(obj, str) else json.dumps(obj)) + "\n")
         self.p.stdin.flush()
 
-    def recv(self):
+    def recv(self, timeout: float = 20.0):
+        """The next response; notifications are kept aside. A server that says nothing for `timeout` seconds fails the test, never
+        hangs it (FABLE 16:58, R1: a Guard that deadlocks must show up as a failure)."""
         while True:
-            line = self.p.stdout.readline()
-            if not line:
-                raise EOFError("the server closed its stdout: " + self.p.stderr.read()[-2000:])
+            try:
+                line = self.lines.get(timeout=timeout)
+            except queue.Empty:
+                raise TimeoutError(f"no answer in {timeout:g} s; stderr: " + "".join(self.stderr_lines)[-2000:]) from None
+            if line is None:
+                raise EOFError("the server closed its stdout; stderr: " + "".join(self.stderr_lines)[-2000:])
             msg = json.loads(line)
             if isinstance(msg, dict) and "id" not in msg and "method" in msg:
                 self.notifications.append(msg)              # progress, list_changed ...: kept, not a response
@@ -61,6 +81,18 @@ class Client:
         if meta:
             params["_meta"] = meta
         return self.call("tools/call", params)
+
+    def rest(self, timeout: float = 5.0) -> list[str]:
+        """Every line the server still writes until it closes its stdout (after stdin is closed)."""
+        out = []
+        while True:
+            try:
+                line = self.lines.get(timeout=timeout)
+            except queue.Empty:
+                return out
+            if line is None:
+                return out
+            out.append(line)
 
     def close(self):
         try:

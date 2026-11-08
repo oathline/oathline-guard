@@ -80,8 +80,7 @@ class G1_Proxy(GuardCase):
         self.g.tool("list_databases")
         self.g.tool("drop_database", {"name": "prod"})
         self.g.p.stdin.close()
-        rest = self.g.p.stdout.read()
-        for line in rest.splitlines():
+        for line in self.g.rest():
             if line.strip():
                 self.assertEqual(json.loads(line)["jsonrpc"], "2.0")
 
