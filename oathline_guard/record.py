@@ -309,7 +309,8 @@ class Record:
 
     def yes(self, call: str, code_typed: str, human: str) -> bool:
         """The person's yes as a ROW (never confirm(): the Guard process confirms from it). A wrong code is NOT an answer: nothing is
-        stored and the call stays pending (FABLE 19:01); the approver check compares it again. The first answer stands."""
+        stored and the call stays pending (FABLE 19:01); the approver check compares it again. The first answer stands. The row keeps
+        the CALL's code, which the typed code equalled after trimming and upper-casing (FABLE 19:29 (b)): the row proves it was typed."""
         try:
             row = self._row(call)
         except KeyError:
