@@ -51,7 +51,8 @@ then restart Claude Desktop:
 ```
 
 `oathline_guard.demo.fake_db` is a tiny database server with two reads and two writes (`drop_database`, `delete_backups`) and
-no protection of its own. If `oathline-guard` is not on your PATH, use the full path that `pip` printed.
+no protection of its own. Claude Desktop starts it with a short PATH: if `oathline-guard` is not found, use the full path that
+`pip` printed, and if `python` is not found (on macOS often only `python3` exists), write `python3` or the interpreter's full path.
 
 **4. Open the approve window** in a second terminal and leave it open:
 
@@ -70,7 +71,9 @@ always wait, whatever the server's own annotations (`readOnlyHint`) say.
 
 - Reads on your list pass untouched; everything else is held, and the real server is not called until the yes.
 - The words in the window are the guard's: the tool and every argument, never the server's description. A value cannot add a
-  line of its own; long values are shown whole and bound by hash.
+  line of its own; long values are shown whole and bound by hash, up to 16,000 characters of window text and Oathline Core's
+  8 KB cap on a call's items. A call beyond either is refused before anything is shown (`text_too_large`, `items_too_large`):
+  split it.
 - The yes runs the stored arguments exactly once. A wrong code decides nothing; a no is recorded, and a later yes is too late.
 - The approve window reads only from a terminal: an agent's shell tool cannot pipe the code in.
 
