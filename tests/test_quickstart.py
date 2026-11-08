@@ -11,8 +11,8 @@ the staging call says SHOWN = HEARD = CONFIRMED = RUN; `oathline-agent verify` s
 the person refused it (the no is in Core's chain as the Guard's REFUSED_BY_HUMAN); walking the chain, every proposal the person
 answered has exactly one SHOWN and one HEARD before its answer.
 
-It needs the oathline-agent repo: OATHLINE_AGENT_PATH, else C:/dev/oathline-agent beside this repo; without it the test FAILS
-saying so (FABLE 20:29). Plan section 9's steps 1-3 (pip install, demo, init) are not run here: the read list is written by hand
+It needs the oathline-agent repo: OATHLINE_AGENT_PATH, else oathline-agent beside this repo; without it the test is SKIPPED
+saying so (a stranger's clone, FABLE 10:16), and FAILS saying so when OATHLINE_REQUIRE_AGENT=1 (our own runs, FABLE 20:29). Plan section 9's steps 1-3 (pip install, demo, init) are not run here: the read list is written by hand
 (what `init` will write, G6).
 """
 import io
@@ -76,8 +76,11 @@ class PocketOSQuickstart(unittest.TestCase):
             rec.close()
 
     def oathline_agent(self, *argv):
-        self.assertTrue(os.path.isdir(os.path.join(AGENT_REPO, "oathline_agent")),
-                        f"the quickstart needs the oathline-agent repo: set OATHLINE_AGENT_PATH (looked in {AGENT_REPO})")
+        if not os.path.isdir(os.path.join(AGENT_REPO, "oathline_agent")):
+            why = f"the quickstart needs the oathline-agent repo: set OATHLINE_AGENT_PATH (looked in {AGENT_REPO})"
+            if os.environ.get("OATHLINE_REQUIRE_AGENT") == "1":      # our own runs: absent is a failure (FABLE 20:29)
+                self.fail(why)
+            self.skipTest(why)                                       # a stranger's clone: a skip with the reason (FABLE 10:16)
         env = dict(os.environ, PYTHONPATH=os.pathsep.join([AGENT_REPO, _core.ROOT]), PYTHONIOENCODING="utf-8",
                    OATHLINE_GUARD_HOME=self.home, OATHLINE_GUARD_SERVER="db")
         folder = os.path.join(self.home, "db")
