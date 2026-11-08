@@ -79,7 +79,9 @@ Limits, said plainly:
 - **A pseudo-terminal passes the terminal check.** It stops a pipe, not a determined local process with a pty.
 - **An agent with a raw shell or a raw token goes around any MCP guard.** The guard governs the calls that pass through it;
   switch off the client's own write tools for the session if the guard must be the only way to act.
-- **No timeout on an upstream call yet**, and the agent retries after the yes (no waiting notification yet).
+- **No timeout on an upstream call yet**, and the agent retries after the yes (no waiting notification yet). On Windows, when
+  the upstream is started through a virtual environment's `python.exe` (a launcher that holds the pipes), an upstream that
+  closes its output but keeps running is noticed only when it exits.
 - **stdio servers only**; one person per guarded server; the terminal is the only approval channel.
 - **Secret arguments are not masked yet**: a secret in an argument is shown in the window.
 - **Heard is not understood:** the record proves the words were shown and answered, not that they were read.
