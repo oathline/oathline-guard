@@ -57,8 +57,7 @@ def main(mode):
                                                          "serverInfo": {"name": f"fake-{mode}", "version": "0"}}})
             if mode == "badbyte":
                 sys.stdout.flush()
-                sys.stdout.buffer.write(b"ÿþ stray bytes from a log line
-")
+                sys.stdout.buffer.write(bytes([0xFF, 0xFE]) + b" stray bytes from a log line" + bytes([10]))
                 sys.stdout.buffer.flush()
             if mode == "chatty":
                 out({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "data": "hello early"}})
