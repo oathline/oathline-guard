@@ -18,8 +18,10 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 from tests import _core
@@ -169,6 +171,51 @@ class K9_Manifest(unittest.TestCase):
             self.assertIn(line, m)
         pkgs = pyproject()["tool"]["setuptools"]["packages"]
         self.assertEqual(sorted(pkgs), ["oathline_guard", "oathline_guard.demo"])
+
+
+class K10_ReadmeSaysTheCaps(unittest.TestCase):
+    """FABLE 10:16 items 2-3: the README names the interpreter clause for Claude Desktop and the caps a long call meets."""
+
+    def test_k10(self):
+        from oathline_guard.record import SHOWN_TEXT_MAX
+        text = read("README.md")
+        self.assertIn("python3", text)
+        self.assertIn(f"{SHOWN_TEXT_MAX:,} characters", text)
+        for word in ("8 KB", "text_too_large", "items_too_large"):
+            self.assertIn(word, text)
+
+
+class K11_NamedArgumentsCarryNoValueHint(unittest.TestCase):
+    """FABLE 10:16 item 4: the 2025-12-11 schema defines valueHint for positional arguments only."""
+
+    def test_k11(self):
+        for a in server_json()["packages"][0]["packageArguments"]:
+            if a["type"] == "named":
+                self.assertNotIn("valueHint", a, a["name"])
+                self.assertTrue(a.get("description"), a["name"])
+
+
+class K12_QuickstartSkipsWithoutTheAgentRepo(unittest.TestCase):
+    """FABLE 10:16 item 5: a stranger's clone (no oathline-agent beside it) gets a SKIP with the reason, not a red test;
+    OATHLINE_REQUIRE_AGENT=1 keeps our local strictness (then it fails)."""
+
+    def run_quickstart(self, **env):
+        empty = tempfile.mkdtemp(prefix="no-agent-")
+        self.addCleanup(shutil.rmtree, empty, True)
+        e = {k: v for k, v in os.environ.items() if k not in ("OATHLINE_AGENT_PATH", "OATHLINE_REQUIRE_AGENT")}
+        e.update({"OATHLINE_AGENT_PATH": empty, "PYTHONUTF8": "1"}, **env)
+        return subprocess.run([sys.executable, "-m", "unittest", "tests.test_quickstart.PocketOSQuickstart.test_the_quickstart", "-v"],
+                              capture_output=True, text=True, encoding="utf-8", cwd=ROOT, env=e, timeout=300, stdin=subprocess.DEVNULL)
+
+    def test_k12_skips(self):
+        p = self.run_quickstart()
+        self.assertEqual(p.returncode, 0, p.stderr[-800:])
+        self.assertIn("skipped", p.stderr)
+        self.assertIn("oathline-agent", p.stderr)
+
+    def test_k12_required_fails(self):
+        p = self.run_quickstart(OATHLINE_REQUIRE_AGENT="1")
+        self.assertNotEqual(p.returncode, 0)
 
 
 if __name__ == "__main__":
