@@ -197,5 +197,35 @@ class W6_MainDoesNotHideTheConsole(Case):
         self.assertEqual(self.events("SHOWN"), [])
 
 
+
+class W7_TheNoEvent(Case):
+    """FABLE 21:17 nits: the REFUSED_BY_HUMAN event names the call and the channel; a no typed after the call expired writes no
+    event for the expired token; window() resolves its terminal check when called."""
+
+    def test_w7_payload(self):
+        self.g.tool("drop_database", {"name": "prod"})
+        rec = self.rec()
+        self.window(rec, ["n"])
+        ev = self.events("REFUSED_BY_HUMAN")
+        self.assertEqual(len(ev), 1)
+        call = rec.db.execute("SELECT call FROM calls").fetchone()[0]
+        self.assertEqual(ev[0]["payload"].get("call"), call)
+        self.assertEqual(ev[0]["payload"].get("channel"), "screen")
+
+    def test_w7_no_after_expiry_writes_nothing(self):
+        from oathline_guard.record import TTL_SECONDS
+        self.g.tool("drop_database", {"name": "prod"})
+        later = time.time() + TTL_SECONDS + 5
+        rec = self.rec(clock=lambda: later)
+        call = rec.db.execute("SELECT call FROM calls").fetchone()[0]
+        rec.no(call, HUMAN)
+        self.assertEqual(self.events("REFUSED_BY_HUMAN"), [])
+
+    def test_w7_window_isatty_default_resolved_when_called(self):
+        import inspect
+        from oathline_guard import approve
+        self.assertIsNone(inspect.signature(approve.window).parameters["isatty"].default)
+
+
 if __name__ == "__main__":
     unittest.main()
