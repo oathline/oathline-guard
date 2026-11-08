@@ -210,5 +210,19 @@ class N6_OddToolName(Case):
         self.assertIn("result", g.call("ping"))
 
 
+
+class N7_ServerName(unittest.TestCase):
+    """FABLE 19:29 (a): '<server> / <tool>' must name one server and one tool: a --server holding '/' (or edge spaces, or a
+    character that is not a plain name) would let 'db / x' + 'y' read as 'db' + 'x / y'. Refused at start, exit 2."""
+
+    def test_n7(self):
+        for bad in ("db/x", "db / x", " db", "db\nx", ""):
+            root = tempfile.mkdtemp(prefix="oathline-guard-n7-")
+            self.addCleanup(shutil.rmtree, root, True)
+            g = guard(root, fake_db_argv(os.path.join(root, "db.json")), server=bad)
+            self.addCleanup(g.close)
+            self.assertEqual(g.p.wait(timeout=20), 2, repr(bad))
+
+
 if __name__ == "__main__":
     unittest.main()
