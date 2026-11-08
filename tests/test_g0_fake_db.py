@@ -43,15 +43,15 @@ class G0(unittest.TestCase):
 
     def test_g0c_called_directly_nothing_stops_the_delete(self):
         self.c.start()
+        self.assertFalse(self.c.tool("delete_backups", {"name": "prod"})["result"]["isError"])   # the backups first, then the database
         self.assertFalse(self.c.tool("drop_database", {"name": "prod"})["result"]["isError"])
-        self.assertFalse(self.c.tool("delete_backups", {"name": "prod"})["result"]["isError"])
         self.assertNotIn("prod", self.db())                       # gone, with its backups: the incident, without a Guard
 
     def test_g0d_errors(self):
         self.c.start()
         r = self.c.tool("drop_database", {"name": "nope"})["result"]
         self.assertTrue(r["isError"])
-        self.assertIn("no database", self.text(r))
+        self.assertIn("no database", r["content"][0]["text"])
         self.assertEqual(self.c.tool("format_disk", {})["error"]["code"], -32602)
         self.assertEqual(self.c.call("resources/list")["error"]["code"], -32601)
 
