@@ -31,6 +31,20 @@ from oathline import AuditLog
 HUMAN = "saroj"
 
 
+def run_main(argv, *, stdout=None):
+    """approve.main() in-process with the terminal check passing (FABLE 20:29: a subprocess inherits the RUNNER's stdin, which is
+    not a terminal under CI, so the branch under test was never reached there). -> (exit code, stdout text, stderr text)."""
+    import contextlib
+    from unittest import mock
+    from oathline_guard import approve
+    out = stdout if stdout is not None else io.StringIO()
+    err = io.StringIO()
+    with mock.patch.object(approve, "_stdin_is_terminal", lambda: True), mock.patch("builtins.input", lambda prompt="": "n"), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = approve.main(list(argv))
+    return code, (out.getvalue() if isinstance(out, io.StringIO) else ""), err.getvalue()
+
+
 class G4Case(unittest.TestCase):
     SERVER = "db"
 
@@ -185,12 +199,11 @@ class A7_Edges(G4Case):
         self.assertEqual(n, 0)
         self.assertIn("Nothing is waiting", out)
 
-    def test_a7_no_human_recorded(self):
+    def test_a7_no_guard_record(self):
         os.makedirs(os.path.join(self.home, "db"), exist_ok=True)
-        p = subprocess.run([sys.executable, "-m", "oathline_guard", "approve", "--server", "db", "--home", self.home, "--once"],
-                           capture_output=True, text=True, encoding="utf-8", cwd=_core.ROOT, env=env(), timeout=60)
-        self.assertEqual(p.returncode, 2)
-        self.assertIn("--human", p.stderr)
+        code, out, err = run_main(["--server", "db", "--home", self.home, "--once"])     # in-process (FABLE 20:29)
+        self.assertEqual(code, 2)
+        self.assertIn("--human", err)
 
 
 if __name__ == "__main__":

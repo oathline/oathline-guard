@@ -25,6 +25,20 @@ from oathline import AuditLog
 HUMAN = "saroj"
 
 
+def run_main(argv, *, stdout=None):
+    """approve.main() in-process with the terminal check passing (FABLE 20:29: a subprocess inherits the RUNNER's stdin, which is
+    not a terminal under CI, so the branch under test was never reached there). -> (exit code, stdout text, stderr text)."""
+    import contextlib
+    from unittest import mock
+    from oathline_guard import approve
+    out = stdout if stdout is not None else io.StringIO()
+    err = io.StringIO()
+    with mock.patch.object(approve, "_stdin_is_terminal", lambda: True), mock.patch("builtins.input", lambda prompt="": "n"), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = approve.main(list(argv))
+    return code, (out.getvalue() if isinstance(out, io.StringIO) else ""), err.getvalue()
+
+
 class Case(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="oathline-guard-g4r-")
@@ -136,25 +150,49 @@ class W4_NeverConfirmsStronger(unittest.TestCase):
 
 
 class W5_Names(unittest.TestCase):
-    def run_approve(self, *argv):
-        return subprocess.run([sys.executable, "-m", "oathline_guard", "approve", *argv], capture_output=True, text=True,
-                              encoding="utf-8", cwd=_core.ROOT, env=env(), timeout=60)
+    """In-process (FABLE 20:29): the subprocess form only reached these branches when the runner's own stdin was a terminal."""
 
     def test_w5_server_name_rule(self):
         root = tempfile.mkdtemp(prefix="oathline-guard-w5-")
         self.addCleanup(shutil.rmtree, root, True)
-        p = self.run_approve("--server", "../other", "--home", root, "--once")
-        self.assertEqual(p.returncode, 2)
-        self.assertIn("plain name", p.stderr)
+        code, out, err = run_main(["--server", "../other", "--home", root, "--once"])
+        self.assertEqual(code, 2)
+        self.assertIn("plain name", err)
 
     def test_w5_started_without_human(self):
         root = tempfile.mkdtemp(prefix="oathline-guard-w5-")
         self.addCleanup(shutil.rmtree, root, True)
         from oathline_guard.record import Record
         Record(os.path.join(root, "db"), "db", human="").close()
-        p = self.run_approve("--server", "db", "--home", root, "--once")
+        code, out, err = run_main(["--server", "db", "--home", root, "--once"])
+        self.assertEqual(code, 2)
+        self.assertIn("--human", err)
+
+    def test_w5_piped_stdin_is_refused_as_a_subprocess(self):
+        root = tempfile.mkdtemp(prefix="oathline-guard-w5-")
+        self.addCleanup(shutil.rmtree, root, True)
+        p = subprocess.run([sys.executable, "-m", "oathline_guard", "approve", "--server", "db", "--home", root, "--once"],
+                           input="", capture_output=True, text=True, encoding="utf-8", cwd=_core.ROOT, env=env(), timeout=60)
         self.assertEqual(p.returncode, 2)
-        self.assertIn("--human", p.stderr)
+
+
+class W6_MainDoesNotHideTheConsole(Case):
+    """FABLE 20:29: main() reconfigured stdout to UTF-8, so the console check always passed and a cp1252 console got UTF-8 bytes
+    while SHOWN hashed the real text. main() leaves the console as it is; a console that cannot encode the text is told so."""
+
+    def test_w6(self):
+        self.g.tool("drop_database", {"name": "\u65e5\u672c"})
+        raw = io.BytesIO()
+        cp1252 = io.TextIOWrapper(raw, encoding="cp1252", errors="strict", write_through=True)
+        import contextlib
+        from unittest import mock
+        from oathline_guard import approve
+        with mock.patch.object(approve, "_stdin_is_terminal", lambda: True), mock.patch("builtins.input", lambda prompt="": "n"), \
+                mock.patch.object(sys, "stdout", cp1252), contextlib.redirect_stderr(io.StringIO()):
+            approve.main(["--server", "db", "--home", self.home, "--once"])
+        printed = raw.getvalue().decode("cp1252", "replace")
+        self.assertIn("cannot display", printed)
+        self.assertEqual(self.events("SHOWN"), [])
 
 
 if __name__ == "__main__":

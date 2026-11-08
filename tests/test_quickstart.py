@@ -7,7 +7,13 @@ Here a scripted agent (an MCP client standing in for the model) talks to fake-db
 Pass = in under 5 minutes by this test's clock: the agent's reads pass; delete_backups("prod") and drop_database("prod") are shown
 exactly and refused by the person; a coded yes to drop_database("staging") runs it once; the agent's switch back to "prod" is a new
 proposal that runs nothing; prod and every backup are intact and staging is gone; `oathline-agent unheard` finds 0 rows; `heard` on
-the staging call says SHOWN = HEARD = CONFIRMED = RUN; `oathline-agent verify` says the chain is ok.
+the staging call says SHOWN = HEARD = CONFIRMED = RUN; `oathline-agent verify` says the chain is ok; `why` on a refused call says
+the person refused it (the no is in Core's chain as the Guard's REFUSED_BY_HUMAN); walking the chain, every proposal the person
+answered has exactly one SHOWN and one HEARD before its answer.
+
+It needs the oathline-agent repo: OATHLINE_AGENT_PATH, else C:/dev/oathline-agent beside this repo; without it the test FAILS
+saying so (FABLE 20:29). Plan section 9's steps 1-3 (pip install, demo, init) are not run here: the read list is written by hand
+(what `init` will write, G6).
 """
 import io
 import json
@@ -67,6 +73,8 @@ class PocketOSQuickstart(unittest.TestCase):
             rec.close()
 
     def oathline_agent(self, *argv):
+        self.assertTrue(os.path.isdir(os.path.join(AGENT_REPO, "oathline_agent")),
+                        f"the quickstart needs the oathline-agent repo: set OATHLINE_AGENT_PATH (looked in {AGENT_REPO})")
         env = dict(os.environ, PYTHONPATH=os.pathsep.join([_core.CORE, AGENT_REPO, _core.ROOT]), PYTHONIOENCODING="utf-8",
                    OATHLINE_GUARD_HOME=self.home, OATHLINE_GUARD_SERVER="db")
         folder = os.path.join(self.home, "db")
@@ -121,6 +129,24 @@ class PocketOSQuickstart(unittest.TestCase):
         code, out = self.oathline_agent("heard", staging)
         self.assertEqual(code, 0, out)
         self.assertIn("SHOWN = HEARD = CONFIRMED = RUN", out)
+        refused = self.tokens()[("drop_database", "prod")]
+        code, out = self.oathline_agent("why", refused)
+        self.assertIn("refused by human", out, out)
+
+        # the chain, walked: every proposal the person answered has one SHOWN and one HEARD before its answer
+        from oathline import AuditLog
+        log = AuditLog(os.path.join(self.home, "db", "audit.db"), chain_id="oathline-guard-db")
+        try:
+            events = log.events()
+        finally:
+            log.close()
+        answered = {e["payload"]["token"] for e in events if e["event_type"] in ("REFUSED_BY_HUMAN", "CONFIRMED_BY_HUMAN")}
+        self.assertEqual(len(answered), 3)
+        for tok in answered:
+            mine = [e["event_type"] for e in events if e["payload"].get("token") == tok]
+            self.assertEqual(mine.count("SHOWN"), 1, mine)
+            self.assertEqual(mine.count("HEARD"), 1, mine)
+            self.assertLess(mine.index("HEARD"), max(i for i, t in enumerate(mine) if t in ("REFUSED_BY_HUMAN", "CONFIRMED_BY_HUMAN")))
 
         self.assertLess(time.monotonic() - self.t0, 300, "the quickstart must take under five minutes")
 
