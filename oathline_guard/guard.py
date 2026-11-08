@@ -4,17 +4,27 @@
 
 Reads (the OPERATOR's list, never the upstream's readOnlyHint, never the agent) pass to the upstream untouched. Every other tool is
 held: in G2 it is simply not run; from G3 it becomes a heard proposal. No read list = nothing passes. stdout carries JSON-RPC only.
+
+The upstream is read by its own thread (FABLE 16:58 review): a request FROM the upstream (roots/list, sampling, elicitation) is
+answered -32601 at once, never left to deadlock the Guard; a notification is handed to the client as it arrives; a response goes to
+the one call waiting for it. When the upstream dies the Guard says so and exits, so the client can restart it.
+Limit until G5: no timeout on an upstream call (a hung upstream hangs the serial loop, ping included).
 """
 from __future__ import annotations
 
+import io
 import json
 import os
+import queue
+import shutil
 import subprocess
 import sys
+import threading
 
 from . import __version__, stdio
 
-PASS_METHODS = ("resources/list", "resources/read", "resources/templates/list", "prompts/list", "prompts/get")   # reads (plan s3)
+PASS_METHODS = {"resources/list": "resources", "resources/read": "resources", "resources/templates/list": "resources",
+                "prompts/list": "prompts", "prompts/get": "prompts"}   # reads (plan section 3), passed only if the upstream offers them
 
 
 class UpstreamError(Exception):
@@ -22,14 +32,45 @@ class UpstreamError(Exception):
 
 
 class Upstream:
-    """The real MCP server, spawned with its own command; spoken to over its stdio."""
+    """The real MCP server, spawned with its own command; spoken to over its stdio (LF only, UTF-8), read by its own thread."""
 
-    def __init__(self, argv: list[str]):
+    def __init__(self, argv: list[str], on_notification=None):
         if not argv:
             raise UpstreamError("no upstream command after --")
-        self.p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None, text=True, encoding="utf-8")
+        exe = shutil.which(argv[0]) or argv[0]               # FABLE 16:58 nit: `npx` and friends on Windows
+        self.p = subprocess.Popen([exe, *argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None)
+        self.stdin = io.TextIOWrapper(self.p.stdin, encoding="utf-8", newline="\n", write_through=True)   # LF only, never CRLF
+        self.stdout = io.TextIOWrapper(self.p.stdout, encoding="utf-8", newline="\n")
+        self.lock = threading.Lock()
+        self.responses: queue.Queue = queue.Queue()
+        self.on_notification = on_notification or (lambda msg: None)
         self.n = 0
-        self.notifications: list[dict] = []
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _send(self, msg) -> None:
+        with self.lock:
+            stdio.write(self.stdin, msg)
+
+    def _read(self) -> None:
+        try:
+            while True:
+                got = stdio.read(self.stdout)
+                if got is None:
+                    break
+                if not isinstance(got, dict):
+                    continue
+                if "method" in got and "id" in got:          # the upstream asks US something: refused at once, never left hanging
+                    try:
+                        self._send(stdio.error(got["id"], -32601, f"{got['method']} is not supported by oathline-guard v1"))
+                    except (OSError, ValueError):
+                        break
+                elif "method" in got:
+                    self.on_notification(got)
+                elif "id" in got:
+                    self.responses.put(got)
+        except (OSError, ValueError):
+            pass
+        self.responses.put(None)                              # the upstream closed its output
 
     def call(self, method: str, params=None) -> dict:
         self.n += 1
@@ -38,25 +79,31 @@ class Upstream:
         if params is not None:
             msg["params"] = params
         try:
-            stdio.write(self.p.stdin, msg)
+            self._send(msg)
         except (OSError, ValueError) as exc:
             raise UpstreamError(f"the upstream server is not running ({exc})") from None
         while True:
-            got = stdio.read(self.p.stdout)
+            got = self.responses.get()
             if got is None:
+                self.responses.put(None)                      # every later call sees the end too
                 raise UpstreamError("the upstream server closed its output")
-            if isinstance(got, dict) and got.get("id") == mid:
+            if got.get("id") == mid:
                 return got
-            if isinstance(got, dict) and "method" in got and "id" not in got:
-                self.notifications.append(got)                 # list_changed, progress, log ...: handed on by the Guard
-            # anything else (a stray id, an upstream request to us): ignored in v1
+            # a response to an id we no longer wait for: dropped
 
     def notify(self, method: str, params=None) -> None:
-        stdio.write(self.p.stdin, {"jsonrpc": "2.0", "method": method, **({"params": params} if params is not None else {})})
+        self._send({"jsonrpc": "2.0", "method": method, **({"params": params} if params is not None else {})})
+
+    def dead(self) -> bool:
+        try:
+            self.p.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
 
     def close(self) -> None:
         try:
-            self.p.stdin.close()
+            self.stdin.close()
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -82,26 +129,48 @@ def load_reads(path: str | None, server: str) -> frozenset:
 
 
 class Guard:
-    def __init__(self, server: str, upstream: Upstream, reads: frozenset, home: str):
-        self.server, self.up, self.reads, self.home = server, upstream, reads, home
+    def __init__(self, server: str, upstream_argv: list[str], reads: frozenset, home: str, stdout=None):
+        self.server, self.reads, self.home = server, reads, home
+        self.out = stdout or sys.stdout
+        self.out_lock = threading.Lock()
         os.makedirs(home, exist_ok=True)
+        self.tool_names: set = set()
+        self.up = Upstream(upstream_argv, on_notification=self._upstream_notification)
         init = self.up.call("initialize", {"protocolVersion": stdio.PROTOCOL_VERSIONS[0], "capabilities": {},
                                           "clientInfo": {"name": "oathline-guard", "version": __version__}})
         if "result" not in init:
             raise UpstreamError(f"the upstream server refused initialize: {init.get('error')}")
         self.upstream_info = init["result"].get("serverInfo", {})
+        self.upstream_caps = init["result"].get("capabilities") or {}
         self.up.notify("notifications/initialized")
         self.refresh_tools()
 
+    # ---------------------------------------------------------------- the upstream's side
+    def _write(self, msg) -> None:
+        with self.out_lock:
+            stdio.write(self.out, msg)
+
+    def _upstream_notification(self, msg: dict) -> None:
+        if msg.get("method") == "notifications/tools/list_changed":
+            self.tool_names = set()                               # learnt again on next use; a new tool is held: not on the read list
+        self._write(msg)
+
     def refresh_tools(self) -> None:
-        r = self.up.call("tools/list")
-        self.tools = (r.get("result") or {}).get("tools") or []
-        self.tool_names = {t.get("name") for t in self.tools}
+        """Every page of the upstream's tools (the Guard must know them all to say "unknown tool" truthfully)."""
+        names, cursor, pages = set(), None, 0
+        while pages < 100:
+            r = self.up.call("tools/list", {"cursor": cursor} if cursor else None)
+            res = r.get("result") or {}
+            names |= {t.get("name") for t in res.get("tools") or [] if isinstance(t, dict)}
+            cursor, pages = res.get("nextCursor"), pages + 1
+            if not cursor:
+                break
+        self.tool_names = names
 
     def capability(self, tool: str) -> str:
         return f"mcp/{self.server}/{tool}"
 
-    # ---------------------------------------------------------------- the client side
+    # ---------------------------------------------------------------- the client's side
     def handle(self, msg) -> dict | None:
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
             return stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32600, "invalid request")
@@ -109,20 +178,28 @@ class Guard:
             return None                                          # notifications from the client: nothing to answer
         mid, method, params = msg["id"], msg["method"], msg.get("params") or {}
         if method == "initialize":
+            caps = {"tools": {"listChanged": True}}
+            for kind in ("resources", "prompts"):                # mirrored: offered only when the upstream offers them
+                if kind in self.upstream_caps:
+                    caps[kind] = {}
             return stdio.result(mid, {
                 "protocolVersion": stdio.agreed_version(params.get("protocolVersion") if isinstance(params, dict) else None),
-                "capabilities": {"tools": {"listChanged": True}},
+                "capabilities": caps,
                 "serverInfo": {"name": "oathline-guard", "version": __version__},
                 "instructions": (f"oathline-guard in front of {self.server!r} ({self.upstream_info.get('name', '?')}). Reads pass. Every "
                                  "other tool is held for a person's yes on a channel you do not control; you cannot give that yes.")})
         if method == "ping":
             return stdio.result(mid, {})
-        if method == "tools/list":
-            self.refresh_tools()
-            return stdio.result(mid, {"tools": self.tools})      # passed through unchanged (G1)
+        if method == "tools/list":                               # passed through: the client's params, the upstream's result
+            r = self.up.call("tools/list", params or None)
+            r["id"] = mid
+            for t in (r.get("result") or {}).get("tools") or []:
+                if isinstance(t, dict):
+                    self.tool_names.add(t.get("name"))
+            return r
         if method == "tools/call":
             return self.tools_call(mid, params if isinstance(params, dict) else {})
-        if method in PASS_METHODS:
+        if method in PASS_METHODS and PASS_METHODS[method] in self.upstream_caps:
             r = self.up.call(method, params)
             r["id"] = mid
             return r
@@ -130,6 +207,8 @@ class Guard:
 
     def tools_call(self, mid, params: dict) -> dict:
         name = params.get("name")
+        if not isinstance(name, str):                            # FABLE 16:58 nit: -32602, not an internal error
+            return stdio.error(mid, -32602, "the tool name must be a string")
         if name not in self.tool_names:
             self.refresh_tools()
             if name not in self.tool_names:
@@ -145,27 +224,26 @@ class Guard:
         return stdio.text_result(f"Not run: {self.server}/{name} is held by oathline-guard for a person's yes, and this build has no "
                                  "channel to ask on yet. Nothing was sent to the server.", is_error=True)
 
-    def serve(self, stdin=sys.stdin, stdout=sys.stdout) -> int:
+    def serve(self, stdin=sys.stdin) -> int:
         while True:
             msg = stdio.read(stdin)
             if msg is None:
                 return 0
             if msg == "<parse error>":
-                stdio.write(stdout, stdio.error(None, -32700, "parse error"))
+                self._write(stdio.error(None, -32700, "parse error"))
                 continue
             try:
                 resp = self.handle(msg)
             except UpstreamError as exc:
-                resp = stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32603, f"upstream: {exc}")
+                self._write(stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32603, f"upstream: {exc}"))
+                if self.up.dead():                               # FABLE 16:58: a dead upstream ends the Guard; the client restarts it
+                    print(f"oathline-guard: the upstream server exited ({self.up.p.returncode}); exiting", file=sys.stderr)
+                    return 1
+                continue
             except Exception as exc:  # noqa: BLE001 - never die on one message
                 resp = stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32603, f"internal error: {type(exc).__name__}")
-            for note in self.up.notifications:                   # the upstream's notifications, handed on after the answer
-                if note.get("method") == "notifications/tools/list_changed":
-                    self.refresh_tools()                         # a new tool is held by default: it is not on the read list
-                stdio.write(stdout, note)
-            self.up.notifications.clear()
             if resp is not None:
-                stdio.write(stdout, resp)
+                self._write(resp)
 
 
 def run(argv: list[str]) -> int:
@@ -186,16 +264,13 @@ def run(argv: list[str]) -> int:
     except Exception:  # noqa: BLE001
         pass
     reads = load_reads(a.reads, a.server)
+    guard = None
     try:
-        up = Upstream(upstream_argv)
-    except (UpstreamError, OSError) as exc:
-        print(f"oathline-guard: cannot start the upstream server: {exc}", file=sys.stderr)
-        return 2
-    try:
-        guard = Guard(a.server, up, reads, os.path.join(a.home, a.server))
+        guard = Guard(a.server, upstream_argv, reads, os.path.join(a.home, a.server))
         return guard.serve()
-    except UpstreamError as exc:
+    except (UpstreamError, OSError) as exc:
         print(f"oathline-guard: {exc}", file=sys.stderr)
         return 2
     finally:
-        up.close()
+        if guard is not None:
+            guard.up.close()

@@ -15,4 +15,5 @@ def main(argv=None) -> int:
     return 2
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())
