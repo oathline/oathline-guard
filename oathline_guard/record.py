@@ -87,6 +87,15 @@ def _carried(v) -> bool:
     return isinstance(v, dict) and set(v) == {"sha256", "chars"}
 
 
+def build_registry(server: str, caps: list, human: str) -> Registry:
+    """THE Registry of a guarded server: one Core heard capability per gated tool. The Guard, the approve window and the
+    oathline-agent reader (oathline_guard.registry:for_server) all build it here, so they cannot drift apart."""
+    return Registry([Capability(c, frozenset({AGENT, human}) if human else frozenset({AGENT}), writes=True, needs_confirmation=True,
+                                approvers=frozenset({human}) if human else frozenset(), heard=True, products=frozenset({PRODUCT}),
+                                screen_keys=frozenset(keys), description=f"the MCP tool {tool} on {server}, run once after a heard yes")
+                     for c, tool, keys in caps])
+
+
 class Record:
     def __init__(self, folder: str, server: str, *, human: str | None = None, shown_text: bool | None = None, clock=time.time):
         os.makedirs(folder, exist_ok=True)
@@ -137,11 +146,7 @@ class Record:
     def engine(self, human: str | None = None) -> Engine:
         human = human or self.human or ""
         if self._engine is None:
-            caps = [Capability(c, frozenset({AGENT, human}) if human else frozenset({AGENT}), writes=True, needs_confirmation=True,
-                               approvers=frozenset({human}) if human else frozenset(), heard=True, products=frozenset({PRODUCT}),
-                               screen_keys=frozenset(keys), description=f"the MCP tool {tool} on {self.server}, run once after a heard yes")
-                    for c, tool, keys in self._caps()]
-            eng = Engine(Registry(caps), audit=AuditLog(os.path.join(self.folder, "audit.db"), chain_id=f"oathline-guard-{self.server}"),
+            eng = Engine(build_registry(self.server, self._caps(), human), audit=AuditLog(os.path.join(self.folder, "audit.db"), chain_id=f"oathline-guard-{self.server}"),
                          tokens=TokenStore(os.path.join(self.folder, "tokens.db"), ttl_seconds=TTL_SECONDS),
                          humans=frozenset({human}) if human else None, approver_check=self._approver_check,
                          record_shown_text=self.shown_text)
