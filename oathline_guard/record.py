@@ -19,9 +19,11 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import time
 
 from oathline import AuditLog, Capability, Engine, Registry, TokenStore
+from oathline.capabilities import name_problem
 
 PRODUCT = "oathline-guard"           # the product actor that shows and hears (Core's non-human list matches whole names; not on it)
 AGENT = "agent"                      # the proposing principal: on Core's non-human list, it can never confirm
@@ -32,8 +34,10 @@ ITEMS_BUDGET = 7000                  # Core's items cap is 8 KB (value + said co
 SHOWN_TEXT_MAX = 16000               # Core shows at most 16,384 characters; a call whose text would be longer is refused at proposal
 GUTTER = "| "
 END_MARK = "--- end of {key} ---"
-KEY_RX = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-RESERVED = ("code", "tool", "_call")
+KEY_RX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")   # FABLE 19:01: no leading "_" (the run drops "_" keys as Core's own)
+RESERVED = ("code", "tool")                            # the Guard's own lines and items
+CARRIED_ITEM_BYTES = 200                               # a carried item in Core's items text, measured with oathline.tokens.items_text
+                                                       # (196 bytes for a 3-character key), plus its key twice; FABLE 19:01
 
 
 def _json(v) -> str:
@@ -56,11 +60,27 @@ def _plain(v) -> bool:
     return isinstance(v, str) and v != "" and v == v.strip() and all(ch.isprintable() for ch in v)
 
 
+def _escape_unprintable(text: str) -> str:
+    """Every character that is not printable as its escape (FABLE 19:01: json.dumps leaves U+0085, U+2028, U+2029 raw, and a terminal
+    may break a line on them)."""
+    out = []
+    for ch in text:
+        if ch.isprintable():
+            out.append(ch)
+        elif ord(ch) <= 0xFFFF:
+            out.append("\\u%04x" % ord(ch))
+        else:
+            out.append("\\U%08x" % ord(ch))
+    return "".join(out)
+
+
 def one_line(v) -> str:
-    """A value's words on one line: a plain string as itself, anything else as its JSON literal (newlines and controls escaped)."""
+    """A value's words on one line: a plain string as itself, anything else as its JSON literal with every non-printable character
+    escaped (newlines, controls, line and paragraph separators): a value can never write a line of its own."""
     if _plain(v):
         return v
-    return json.dumps(v, sort_keys=True, ensure_ascii=False) if not isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+    lit = json.dumps(v, sort_keys=True, ensure_ascii=False) if not isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+    return _escape_unprintable(lit)
 
 
 def _carried(v) -> bool:
@@ -68,10 +88,18 @@ def _carried(v) -> bool:
 
 
 class Record:
-    def __init__(self, folder: str, server: str, *, human: str | None = None, clock=time.time):
+    def __init__(self, folder: str, server: str, *, human: str | None = None, shown_text: bool | None = None, clock=time.time):
         os.makedirs(folder, exist_ok=True)
-        self.folder, self.server, self.human, self.clock = folder, server, human, clock
+        self.folder, self.server, self.clock = folder, server, clock
         self.db = sqlite3.connect(os.path.join(folder, "guard.db"), isolation_level=None, timeout=5)
+        self.db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        # the Guard writes who answers and whether the words are kept; the human side reads them, so both build the same Registry
+        if human is not None:
+            self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('human', ?)", (str(human),))
+        if shown_text is not None:
+            self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('shown_text', ?)", ("1" if shown_text else "0",))
+        self.human = human if human is not None else self._meta("human")
+        self.shown_text = (self._meta("shown_text") == "1")
         self.db.execute("CREATE TABLE IF NOT EXISTS caps (capability TEXT PRIMARY KEY, tool TEXT NOT NULL, keys TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS calls (call TEXT PRIMARY KEY, tool TEXT NOT NULL, token TEXT NOT NULL, code TEXT NOT NULL,"
                         " arguments TEXT NOT NULL, args_hash TEXT NOT NULL, status TEXT NOT NULL, outcome TEXT, delivered INTEGER NOT NULL"
@@ -82,6 +110,10 @@ class Record:
         self._executor = None
         self._renderer_caps: set = set()
 
+    def _meta(self, key: str):
+        r = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return r[0] if r else None
+
     # ---------------------------------------------------------------- capabilities (written by the Guard at start, read by both sides)
     def capability(self, tool: str) -> str:
         return f"mcp/{self.server}/{tool}"
@@ -91,6 +123,9 @@ class Record:
         for t in tools:
             name = t.get("name")
             if name not in gated:
+                continue
+            if name_problem(self.capability(str(name))):        # FABLE 19:01: a name Core cannot hold is never a capability
+                print(f"oathline-guard: tool {name!r} has a name Core cannot use; it is held and cannot be asked", file=sys.stderr)
                 continue
             props = sorted(((t.get("inputSchema") or {}).get("properties") or {}).keys())
             self.db.execute("INSERT OR REPLACE INTO caps (capability, tool, keys) VALUES (?,?,?)", (self.capability(name), name, _json(props)))
@@ -108,7 +143,8 @@ class Record:
                     for c, tool, keys in self._caps()]
             eng = Engine(Registry(caps), audit=AuditLog(os.path.join(self.folder, "audit.db"), chain_id=f"oathline-guard-{self.server}"),
                          tokens=TokenStore(os.path.join(self.folder, "tokens.db"), ttl_seconds=TTL_SECONDS),
-                         humans=frozenset({human}) if human else None, approver_check=self._approver_check)
+                         humans=frozenset({human}) if human else None, approver_check=self._approver_check,
+                         record_shown_text=self.shown_text)
             for c, tool, keys in self._caps():
                 eng.register_renderer(c, self._render)
                 if self._executor is not None:
@@ -131,23 +167,29 @@ class Record:
     def _is_block(self, value) -> bool:
         return isinstance(value, str) and (len(value) > LONG_CHARS or "\n" in value or "\r" in value)
 
-    def _plan(self, args: dict, keys: list) -> tuple[dict, list] | str:
-        """Core's arguments and items for these arguments, or the reason they cannot be shown."""
+    def _plan(self, tool: str, args: dict, keys: list) -> tuple[dict, list] | str:
+        """Core's arguments and items for these arguments, or the reason they cannot be shown. The first item is the tool itself
+        ("<server> / <tool>", the text's first line): it binds the tool into the items hash, and a tool with no arguments still has
+        an item to be heard (Core refuses a heard proposal without items)."""
         for k in args:
             if not KEY_RX.match(k) or k in RESERVED:
                 return f"bad_argument_key: {k!r}"
         blocks = {k for k, v in args.items() if self._is_block(v)}
         def size(k):
             v = args[k]
-            return 0 if k in blocks else 2 * len(_text(v).encode("utf-8")) + len(k) + 16
+            if k in blocks:
+                return CARRIED_ITEM_BYTES + 2 * len(k)
+            return 2 * len(_text(v).encode("utf-8")) + 2 * len(k) + 60   # value and said, key and label, the JSON around them
         for k in sorted(args, key=size, reverse=True):         # the largest first, until the items fit the budget
             if sum(size(x) for x in args) <= ITEMS_BUDGET:
                 break
             blocks.add(k)
+        if sum(size(x) for x in args) > ITEMS_BUDGET:           # even carried, too many to show in one proposal: said before Core
+            return (f"items_too_large: {len(args)} arguments cannot be shown in one proposal (Core's items cap); split the call")
         for k in blocks:
             if k not in keys:
                 return f"showing_not_declared: {k!r} is long and the tool's schema does not name it"
-        core_args, items = {}, []
+        core_args, items = {}, [{"key": "tool", "value": f"{self.server} / {tool}", "label": "tool"}]
         for k in sorted(args):
             v = args[k]
             if k in blocks:
@@ -163,16 +205,21 @@ class Record:
         """The shown text: built from Core's record and the Guard's stored arguments, never from the call again."""
         row = self._row(call)
         rec = self.engine().tokens.get(row["token"]) or {}
-        lines = [f"{self.server} / {row['tool']}"]
-        for it in rec.get("items") or []:
+        return self._compose(rec.get("items") or [], row["arguments"], row["code"])
+
+    def _compose(self, items: list, arguments: dict, code: str) -> str:
+        lines = []
+        for it in items:
             k = it["key"]
-            if it.get("shown_as") == "screen":
+            if k == "tool":
+                lines.insert(0, str(it.get("said") or self._render(k, it.get("value"))))
+            elif it.get("shown_as") == "screen":
                 lines.append(f"{k}:")
-                lines += [GUTTER + ln for ln in _text(row["arguments"][k]).split("\n")]
+                lines += [GUTTER + ln for ln in _text(arguments[k]).split("\n")]
                 lines.append(END_MARK.format(key=k))
             else:
-                lines.append(f"{k}: {it.get('said')}")
-        lines.append(f"code: {row['code']}")
+                lines.append(f"{k}: {it.get('said') or self._render(k, it.get('value'))}")
+        lines.append(f"code: {code}")
         return "\n".join(lines)
 
     @staticmethod
@@ -223,10 +270,12 @@ class Record:
         caps = {t: keys for c, t, keys in self._caps()}
         if tool not in caps:
             return {"ok": False, "error": "not_declared"}
-        planned = self._plan(args, caps[tool])
+        planned = self._plan(tool, args, caps[tool])
         if isinstance(planned, str):
             return {"ok": False, "error": planned}
         core_args, items = planned
+        if len(self._compose(items, args, "XXXX")) > SHOWN_TEXT_MAX:   # FABLE 19:01: decided BEFORE Core: no proposal, no live token
+            return {"ok": False, "error": f"text_too_large: the call would show more than {SHOWN_TEXT_MAX} characters; split it"}
         call = "c-" + secrets.token_hex(4)
         core_args["_call"] = call                                # the action names its call (part of its integrity; stripped to run)
         prop = self.engine().request(AGENT, self.capability(tool), core_args, items=items)
@@ -235,10 +284,6 @@ class Record:
         code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(4))
         self.db.execute("INSERT INTO calls (call, tool, token, code, arguments, args_hash, status, created) VALUES (?,?,?,?,?,?, 'pending', ?)",
                         (call, tool, prop["token"], code, _json(args), _sha(_json([tool, args])), self.clock()))
-        if len(self.text(call)) > SHOWN_TEXT_MAX:
-            self._resolve(call, "refused", {"state": "text_too_large"})
-            self.db.execute("UPDATE calls SET delivered=1 WHERE call=?", (call,))
-            return {"ok": False, "error": f"text_too_large: the call would show more than {SHOWN_TEXT_MAX} characters; split it"}
         return {"ok": True, "call": call, "token": prop["token"]}
 
     def _resolve(self, call: str, status: str, outcome: dict) -> None:
@@ -262,10 +307,18 @@ class Record:
     def hear(self, call: str) -> dict:
         return self.engine().hear(PRODUCT, self._row(call)["token"], channel="screen")
 
-    def yes(self, call: str, code_typed: str, human: str) -> None:
-        """The person's yes as a ROW (never confirm(): the Guard process confirms from it). The first answer stands."""
-        self.db.execute("INSERT OR IGNORE INTO answers (call, kind, code_typed, human, at) VALUES (?, 'yes', ?, ?, ?)",
-                        (call, str(code_typed or ""), str(human), self.clock()))
+    def yes(self, call: str, code_typed: str, human: str) -> bool:
+        """The person's yes as a ROW (never confirm(): the Guard process confirms from it). A wrong code is NOT an answer: nothing is
+        stored and the call stays pending (FABLE 19:01); the approver check compares it again. The first answer stands."""
+        try:
+            row = self._row(call)
+        except KeyError:
+            return False
+        if row["status"] != "pending" or str(code_typed or "").strip().upper() != row["code"]:
+            return False
+        cur = self.db.execute("INSERT OR IGNORE INTO answers (call, kind, code_typed, human, at) VALUES (?, 'yes', ?, ?, ?)",
+                              (call, row["code"], str(human), self.clock()))
+        return cur.rowcount == 1
 
     def no(self, call: str, human: str) -> None:
         """The person's no: a RECORDED outcome; any later yes is too late."""
@@ -311,6 +364,8 @@ class Record:
 
     def confirm_from_yes(self, call: str) -> dict:
         """The Guard process: when a yes row exists, Core's confirm with that row as proof; the executor runs the stored arguments."""
+        if self._executor is None:                              # FABLE 19:01: the human side cannot confirm (nothing confirmed or burned)
+            return {"ok": False, "error": "not_the_guard_process"}
         row = self._row(call)
         ans = self.answer(call)
         if row["status"] != "pending" or ans is None or ans["kind"] != "yes":

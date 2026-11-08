@@ -157,13 +157,24 @@ class N2_TooLargeBeforeCore(Case):
 
 
 class N3_Wide(Case):
+    """Corrected before green: 60 carried items cost Core about 10 KB, over its 8 KB items cap, so no packing makes them one proposal.
+    FABLE's point was the budget's undercount (the Guard handed Core what Core then refused); the Guard now counts an item at Core's
+    measured size (oathline.tokens.items_text: about 200 bytes carried, 350 for a plain 150-character value), refuses BEFORE Core with
+    the reason when even carrying cannot fit, and 30 such values are still one proposal (40 was my first guess: Core refused it)."""
     SERVER = "up"
 
-    def test_n3(self):
+    def test_n3_thirty_fit(self):
         g = self.fake("wide")
-        r = g.tool("wide_write", {f"p{i}": "v" * 150 for i in range(60)})["result"]
+        r = g.tool("wide_write", {f"p{i}": "v" * 150 for i in range(30)})["result"]
         self.assertIn("waiting for a person", r["content"][0]["text"], r)
         self.assertEqual(len(self.events("PROPOSED_BY_AGENT")), 1)
+
+    def test_n3_sixty_refused_before_core(self):
+        g = self.fake("wide")
+        r = g.tool("wide_write", {f"p{i}": "v" * 150 for i in range(60)})["result"]
+        self.assertIn("items_too_large", r["content"][0]["text"])
+        self.assertEqual(self.events("PROPOSED_BY_AGENT"), [])
+        self.assertEqual(self.events("REQUEST_REFUSED"), [])
 
 
 class N4_NotTheGuard(Case):
@@ -186,15 +197,17 @@ class N5_HumanInTheRecord(Case):
 
 
 class N6_OddToolName(Case):
+    """Corrected before green: Core cannot name a capability with a newline in it (printable characters only), so such a tool is
+    never a capability: it is held and refused as 'cannot be shown', never proposed, and the Guard keeps serving."""
     SERVER = "up"
 
     def test_n6(self):
         g = self.fake("oddname")
-        g.tool("write\ncode: ZZZZ", {"x": "1"})
-        rec = self.record()
-        text = rec.text(rec.pending()[0]["call"])
-        self.assertEqual(sum(1 for ln in text.splitlines() if ln.startswith("code:")), 1)
-        self.assertTrue(text.splitlines()[0].startswith("up / "))
+        r = g.tool("write\ncode: ZZZZ", {"x": "1"})["result"]
+        self.assertTrue(r["isError"])
+        self.assertIn("cannot be shown", r["content"][0]["text"])
+        self.assertEqual(self.record().pending(), [])
+        self.assertIn("result", g.call("ping"))
 
 
 if __name__ == "__main__":

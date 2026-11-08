@@ -144,13 +144,14 @@ def load_reads(path: str | None, server: str) -> frozenset:
 
 
 class Guard:
-    def __init__(self, server: str, upstream_argv: list[str], reads: frozenset, home: str, stdout=None, human: str | None = None):
+    def __init__(self, server: str, upstream_argv: list[str], reads: frozenset, home: str, stdout=None, human: str | None = None,
+                 shown_text: bool = False):
         self.server, self.reads, self.home, self.human = server, reads, home, (human or None)
         self.tools: list[dict] = []
         self.out = stdout or sys.stdout
         self.out_lock = threading.Lock()
         os.makedirs(home, exist_ok=True)
-        self.record = Record(home, server, human=self.human)
+        self.record = Record(home, server, human=self.human or "", shown_text=shown_text)
         self.record.set_executor(self._run_upstream)             # only this process runs: it holds the upstream's pipe
         # tool_names is rebound by the reader thread (list_changed) and added to by the main thread WITHOUT a lock, on purpose: every
         # interleaving is fail-closed or self-healing (an unknown name triggers a full refresh before anything is forwarded).
@@ -169,6 +170,8 @@ class Guard:
             self.upstream_caps = init["result"].get("capabilities") or {}
             self.up.notify("notifications/initialized")
             self.refresh_tools()
+            if self.human:
+                self.record.engine()                              # FABLE 19:01: a --human Core refuses stops the Guard at start
         except BaseException:
             self.up.close()                                   # FABLE 17:30 / 18:00 nits: never left running after a failed start
             raise
@@ -283,8 +286,9 @@ class Guard:
     def _run_upstream(self, tool: str, arguments: dict) -> dict:
         """Core's executor (G3): the STORED arguments to the real server, once. A protocol error raises (EXECUTE_FAILED)."""
         r = self.up.call("tools/call", {"name": tool, "arguments": arguments})
-        if "result" not in r:
-            raise UpstreamError(f"the upstream refused the call: {r.get('error')}")
+        if "result" not in r:                                    # FABLE 19:01: the upstream's own message, passed back (EXECUTE_FAILED)
+            err = r.get("error") or {}
+            return stdio.text_result(f"the upstream refused the call: {err.get('message') or err}", is_error=True)
         return r["result"]
 
     def held(self, name: str, arguments: dict) -> dict:
@@ -377,6 +381,7 @@ def run(argv: list[str]) -> int:
     ap.add_argument("--reads")
     ap.add_argument("--home", default=os.path.join(os.path.expanduser("~"), ".oathline-guard"))
     ap.add_argument("--human", help="the person whose yes runs a held call (a Core human; never an agent's name)")
+    ap.add_argument("--shown-text", action="store_true", help="keep the shown words in the chain (D6; default: their hash only)")
     a = ap.parse_args(ours)
     try:
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")
@@ -386,8 +391,11 @@ def run(argv: list[str]) -> int:
     reads = load_reads(a.reads, a.server)
     guard = None
     try:
-        guard = Guard(a.server, upstream_argv, reads, os.path.join(a.home, a.server), human=a.human)
+        guard = Guard(a.server, upstream_argv, reads, os.path.join(a.home, a.server), human=a.human, shown_text=a.shown_text)
         return guard.serve()
+    except ValueError as exc:
+        print(f"oathline-guard: --human {a.human!r} cannot answer: {exc}", file=sys.stderr)
+        return 2
     except (UpstreamError, OSError) as exc:
         print(f"oathline-guard: {exc}", file=sys.stderr)
         return 2
