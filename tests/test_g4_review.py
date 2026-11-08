@@ -187,11 +187,13 @@ class W6_MainDoesNotHideTheConsole(Case):
         import contextlib
         from unittest import mock
         from oathline_guard import approve
+        err = io.StringIO()
         with mock.patch.object(approve, "_stdin_is_terminal", lambda: True), mock.patch("builtins.input", lambda prompt="": "n"), \
-                mock.patch.object(sys, "stdout", cp1252), contextlib.redirect_stderr(io.StringIO()):
-            approve.main(["--server", "db", "--home", self.home, "--once"])
+                mock.patch.object(sys, "stdout", cp1252), contextlib.redirect_stderr(err):
+            code = approve.main(["--server", "db", "--home", self.home, "--once"])
         printed = raw.getvalue().decode("cp1252", "replace")
-        self.assertIn("cannot display", printed)
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertIn("cannot display", printed, err.getvalue())
         self.assertEqual(self.events("SHOWN"), [])
 
 

@@ -346,10 +346,15 @@ class Record:
         return cur.rowcount == 1
 
     def no(self, call: str, human: str) -> None:
-        """The person's no: a RECORDED outcome; any later yes is too late."""
-        self.db.execute("INSERT OR IGNORE INTO answers (call, kind, code_typed, human, at) VALUES (?, 'no', NULL, ?, ?)",
-                        (call, str(human), self.clock()))
+        """The person's no: a RECORDED outcome (guard.db), and the Guard's own event REFUSED_BY_HUMAN on Core's chain beside SHOWN and
+        HEARD (FABLE 20:29: so Core's why() for the token says the person refused it); any later yes is too late."""
+        row = self._row(call)
+        cur = self.db.execute("INSERT OR IGNORE INTO answers (call, kind, code_typed, human, at) VALUES (?, 'no', NULL, ?, ?)",
+                              (call, str(human), self.clock()))
         self._resolve(call, "refused", {"state": "refused_by_human", "by": str(human)})
+        if cur.rowcount == 1:
+            self.engine().audit.append("REFUSED_BY_HUMAN", PRODUCT, self.capability(row["tool"]),
+                                       {"token": row["token"], "reason": "the person said no", "by": str(human)})
 
     def answer(self, call: str) -> dict | None:
         r = self.db.execute("SELECT kind, code_typed, human, at FROM answers WHERE call=?", (call,)).fetchone()
@@ -392,6 +397,9 @@ class Record:
         if self._executor is None:                              # FABLE 19:01: the human side cannot confirm (nothing confirmed or burned)
             return {"ok": False, "error": "not_the_guard_process"}
         row = self._row(call)
+        if row["status"] == "pending" and self._expired(row):    # FABLE 20:29 nit: safe on its own, not only behind match()
+            self._resolve(call, "expired", {"state": "expired"})
+            return {"ok": False, "error": "expired"}
         ans = self.answer(call)
         if row["status"] != "pending" or ans is None or ans["kind"] != "yes":
             return {"ok": False, "error": "no_yes"}

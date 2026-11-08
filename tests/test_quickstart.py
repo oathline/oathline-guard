@@ -68,7 +68,10 @@ class PocketOSQuickstart(unittest.TestCase):
         from oathline_guard.record import Record
         rec = Record(os.path.join(self.home, "db"), "db")
         try:
-            return {(r[0], json.loads(r[1]).get("name")): r[2] for r in rec.db.execute("SELECT tool, arguments, token FROM calls ORDER BY created")}
+            out = {}                                   # the FIRST call for each (tool, name): the later prod switch must not hide the refused one
+            for r in rec.db.execute("SELECT tool, arguments, token FROM calls ORDER BY created"):
+                out.setdefault((r[0], json.loads(r[1]).get("name")), r[2])
+            return out
         finally:
             rec.close()
 

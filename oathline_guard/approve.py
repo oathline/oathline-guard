@@ -125,17 +125,16 @@ def main(argv: list[str]) -> int:
         print(f"oathline-guard approve: no guard record for server {a.server!r} in {a.home} (start the guard with --human first)",
               file=sys.stderr)
         return 2
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")         # FABLE 20:01: the text as hashed; a console that still cannot show it is said
-    except Exception:  # noqa: BLE001
-        pass
+    # the console's encoding is left as it is (FABLE 20:29): forcing UTF-8 would make _can_display always pass and send UTF-8 bytes
+    # to a console that shows something else; a console that cannot encode the text is told so and nothing is SHOWN
     rec = Record(folder, a.server)
     try:
         if not rec.human:
             print("oathline-guard approve: the guard was started without --human: nobody can answer", file=sys.stderr)
             return 2
         try:
-            window(rec, ask=lambda prompt, call: input(prompt), out=sys.stdout, once=a.once)
+            # the same terminal check main() made, looked up now (a default argument is bound when window() is defined)
+            window(rec, ask=lambda prompt, call: input(prompt), out=sys.stdout, once=a.once, isatty=lambda: _stdin_is_terminal())
         except NotATerminal as exc:
             print(f"oathline-guard approve: refused: {exc}", file=sys.stderr)
             return 2
