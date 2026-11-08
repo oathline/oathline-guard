@@ -23,6 +23,7 @@ import sys
 import threading
 
 from . import __version__, stdio
+from .record import Record
 
 PENDING_MAX = 1000                                                      # upstream notifications held before the client's first answer
 PASS_METHODS = {"resources/list": "resources", "resources/read": "resources", "resources/templates/list": "resources",
@@ -143,11 +144,14 @@ def load_reads(path: str | None, server: str) -> frozenset:
 
 
 class Guard:
-    def __init__(self, server: str, upstream_argv: list[str], reads: frozenset, home: str, stdout=None):
-        self.server, self.reads, self.home = server, reads, home
+    def __init__(self, server: str, upstream_argv: list[str], reads: frozenset, home: str, stdout=None, human: str | None = None):
+        self.server, self.reads, self.home, self.human = server, reads, home, (human or None)
+        self.tools: list[dict] = []
         self.out = stdout or sys.stdout
         self.out_lock = threading.Lock()
         os.makedirs(home, exist_ok=True)
+        self.record = Record(home, server, human=self.human)
+        self.record.set_executor(self._run_upstream)             # only this process runs: it holds the upstream's pipe
         # tool_names is rebound by the reader thread (list_changed) and added to by the main thread WITHOUT a lock, on purpose: every
         # interleaving is fail-closed or self-healing (an unknown name triggers a full refresh before anything is forwarded).
         self.tool_names: set = set()
@@ -209,15 +213,20 @@ class Guard:
 
     def refresh_tools(self) -> None:
         """Every page of the upstream's tools (the Guard must know them all to say "unknown tool" truthfully)."""
-        names, cursor, pages = set(), None, 0
+        names, tools, cursor, pages = set(), [], None, 0
         while pages < 100:
             r = self.up.call("tools/list", {"cursor": cursor} if cursor else None)
             res = r.get("result") or {}
-            names |= {t.get("name") for t in res.get("tools") or [] if isinstance(t, dict)}
+            page = [t for t in res.get("tools") or [] if isinstance(t, dict)]
+            names |= {t.get("name") for t in page}
+            tools += page
             cursor, pages = res.get("nextCursor"), pages + 1
             if not cursor:
                 break
         self.tool_names = names
+        self.tools = tools
+        if hasattr(self, "record"):                              # every tool not on the read list is a Core capability (G3)
+            self.record.declare_tools(tools, {n for n in names if n not in self.reads})
 
     def capability(self, tool: str) -> str:
         return f"mcp/{self.server}/{tool}"
@@ -271,10 +280,61 @@ class Guard:
             return r
         return stdio.result(mid, self.held(name, params.get("arguments") or {}))
 
+    def _run_upstream(self, tool: str, arguments: dict) -> dict:
+        """Core's executor (G3): the STORED arguments to the real server, once. A protocol error raises (EXECUTE_FAILED)."""
+        r = self.up.call("tools/call", {"name": tool, "arguments": arguments})
+        if "result" not in r:
+            raise UpstreamError(f"the upstream refused the call: {r.get('error')}")
+        return r["result"]
+
     def held(self, name: str, arguments: dict) -> dict:
-        """G2: a gated tool is not run. (G3 makes it a heard proposal.)"""
-        return stdio.text_result(f"Not run: {self.server}/{name} is held by oathline-guard for a person's yes, and this build has no "
-                                 "channel to ask on yet. Nothing was sent to the server.", is_error=True)
+        """G3: a held call is a Core heard proposal. The agent gets a deferred answer; a retry with the same arguments finds the call,
+        runs it once when the person's yes row is there, and delivers its outcome once; after that the same call is asked again."""
+        if not self.human:
+            return stdio.text_result(f"Not run: {self.server}/{name} is held by oathline-guard and no person is configured to answer "
+                                     "(start the guard with --human NAME). Nothing was sent to the server.", is_error=True)
+        if not isinstance(arguments, dict):
+            return stdio.text_result("Not run: the arguments must be an object.", is_error=True)
+        row = self.record.match(name, arguments)
+        if row is not None and row["status"] == "pending":
+            ans = self.record.answer(row["call"])
+            if ans is not None and ans["kind"] == "yes":
+                self.record.confirm_from_yes(row["call"])
+                row = self.record.match(name, arguments) or row
+        if row is not None and row["status"] != "pending":
+            self.record.mark_delivered(row["call"])
+            return self._outcome(name, row)
+        if row is None:
+            p = self.record.propose(name, arguments)
+            if not p.get("ok"):
+                return stdio.text_result(f"Not run: {self.server}/{name} cannot be shown to a person as it is ({p.get('error')}). "
+                                         "Nothing was sent to the server.", is_error=True)
+            row = {"call": p["call"], "created": None}
+        return self._deferred(name, row["call"])
+
+    def _deferred(self, name: str, call: str) -> dict:
+        import time as _t
+        created = self.record._row(call)["created"]
+        expires = _t.strftime("%H:%M", _t.localtime(created + 900))
+        return stdio.text_result(
+            f"Not run. {self.server}/{name} is waiting for a person's yes in `oathline-guard approve --server {self.server}` "
+            f"(call {call}, expires {expires}). Ask the user to approve it there, then call the same tool with the same arguments. "
+            "Nothing was sent to the server.", is_error=True)
+
+    def _outcome(self, name: str, row: dict) -> dict:
+        out = row.get("outcome") or {}
+        state = out.get("state")
+        if state == "ran" and isinstance(out.get("upstream"), dict):
+            return out["upstream"]                               # the upstream's own answer to the stored arguments
+        if state == "failed" and isinstance(out.get("upstream"), dict):
+            return out["upstream"]
+        if state == "refused_by_human":
+            return stdio.text_result(f"Not run: the person said no to {self.server}/{name} (call {row['call']}); it is recorded. "
+                                     "Nothing was sent to the server.", is_error=True)
+        if state == "expired":
+            return stdio.text_result(f"Not run: the proposal for {self.server}/{name} expired before a yes (call {row['call']}).",
+                                     is_error=True)
+        return stdio.text_result(f"Not run: {self.server}/{name} (call {row['call']}): {out.get('error') or state}.", is_error=True)
 
     def serve(self, stdin=sys.stdin) -> int:
         while True:
@@ -316,6 +376,7 @@ def run(argv: list[str]) -> int:
     ap.add_argument("--server", required=True)
     ap.add_argument("--reads")
     ap.add_argument("--home", default=os.path.join(os.path.expanduser("~"), ".oathline-guard"))
+    ap.add_argument("--human", help="the person whose yes runs a held call (a Core human; never an agent's name)")
     a = ap.parse_args(ours)
     try:
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")
@@ -325,7 +386,7 @@ def run(argv: list[str]) -> int:
     reads = load_reads(a.reads, a.server)
     guard = None
     try:
-        guard = Guard(a.server, upstream_argv, reads, os.path.join(a.home, a.server))
+        guard = Guard(a.server, upstream_argv, reads, os.path.join(a.home, a.server), human=a.human)
         return guard.serve()
     except (UpstreamError, OSError) as exc:
         print(f"oathline-guard: {exc}", file=sys.stderr)
