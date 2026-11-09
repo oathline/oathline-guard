@@ -1,9 +1,11 @@
-"""python -m oathline_guard run ... | approve ..."""
+"""oathline-guard run ... | approve ... | demo ..."""
 import sys
 
-USAGE = ("usage: python -m oathline_guard run --server NAME [--reads READS.json] [--home DIR] [--human NAME] [--shown-text] "
+USAGE = ("usage: oathline-guard run --server NAME [--reads READS.json] [--home DIR] [--human NAME] [--shown-text] "
          "-- <server command ...>\n"
-         "       python -m oathline_guard approve --server NAME [--home DIR] [--once]")
+         "       oathline-guard approve --server NAME [--home DIR] [--once]\n"
+         "       oathline-guard demo [--dir DIR] [--human NAME]   (prepares the quickstart; approves and runs nothing)\n"
+         "       (or python -m oathline_guard ...)")
 
 
 def main(argv=None) -> int:
@@ -18,6 +20,9 @@ def main(argv=None) -> int:
     if cmd == "approve":
         from .approve import main as approve_main
         return approve_main(rest)
+    if cmd == "demo":
+        from .demo.setup import main as demo_main
+        return demo_main(rest)
     print(f"oathline-guard: unknown command {cmd!r}", file=sys.stderr)
     return 2
 

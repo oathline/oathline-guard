@@ -28,15 +28,24 @@ The agent only ever gets "Not run ... waiting for a person's yes"; the code is n
 pip install oathline-guard
 ```
 
-**2. Write the read list**, the tools that pass without a yes. Save it as `reads.json` in a folder of your choice:
+**2. Prepare the demo:**
+
+```
+oathline-guard demo
+```
+
+It writes the read list (the tools that pass without a yes) to `~/oathline-guard-demo/reads.json`:
 
 ```json
 {"server": "db", "reads": ["list_databases", "list_tables"]}
 ```
 
-**3. Add the guarded demo server to Claude Desktop.** Open `claude_desktop_config.json` (Settings > Developer > Edit Config;
-on macOS it is in `~/Library/Application Support/Claude/`, on Windows in `%APPDATA%\Claude\`), put in your own folder and name,
-then restart Claude Desktop:
+and prints the block for Claude Desktop with your machine's real paths (it runs everything through the Python you installed
+with, so `PATH` and `python` vs `python3` do not matter). It approves nothing and runs nothing.
+
+**3. Add the block to Claude Desktop.** Open `claude_desktop_config.json` (Settings > Developer > Edit Config; on macOS it is
+in `~/Library/Application Support/Claude/`, on Windows in `%APPDATA%\Claude\`), paste the printed block, then restart Claude
+Desktop. By hand, the block has this shape:
 
 ```json
 {
@@ -51,8 +60,9 @@ then restart Claude Desktop:
 ```
 
 `oathline_guard.demo.fake_db` is a tiny database server with two reads and two writes (`drop_database`, `delete_backups`) and
-no protection of its own. Claude Desktop starts it with a short PATH: if `oathline-guard` is not found, use the full path that
-`pip` printed, and if `python` is not found (on macOS often only `python3` exists), write `python3` or the interpreter's full path.
+no protection of its own. Claude Desktop starts it with a short PATH: written by hand, if `oathline-guard` is not found, use
+the full path that `pip` printed, and if `python` is not found (on macOS often only `python3` exists), write `python3` or the
+interpreter's full path. The block `oathline-guard demo` prints avoids both.
 
 **4. Open the approve window** in a second terminal and leave it open:
 

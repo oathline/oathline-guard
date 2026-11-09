@@ -137,7 +137,7 @@ class K6_QuickstartIsReal(unittest.TestCase):
         named = set(re.findall(r"(?m)^oathline-guard (\w+)", code)) | set(re.findall(r"`oathline-guard (\w+)", text))
         self.assertTrue(named)
         for cmd in named:
-            self.assertIn(cmd, ("run", "approve"), cmd)
+            self.assertIn(cmd, ("run", "approve", "demo"), cmd)
         self.assertEqual(main(["--help"]), 0)
 
 
