@@ -243,10 +243,11 @@ class FixPath(unittest.TestCase):
 
 class W5g_TheRecipe(unittest.TestCase):
     def test_w5g_native_tools_denied_and_every_server_guarded(self):
-        with open(os.path.join(FIX, "claude_settings.json"), encoding="utf-8") as fh:
+        with open(os.path.join(FIX, "claude_settings.json"), encoding="utf-8") as fh:      # `claude --settings`
             s = json.load(fh)
         self.assertTrue({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"} <= set(s["permissions"]["deny"]))
-        servers = s["mcpServers"]
+        with open(os.path.join(FIX, "mcp.json"), encoding="utf-8") as fh:                  # `claude --mcp-config ... --strict-mcp-config`
+            servers = json.load(fh)["mcpServers"]
         self.assertEqual(set(servers), {"fs", "git"})
         for name, entry in servers.items():
             self.assertEqual(entry["command"], "oathline-guard", name)

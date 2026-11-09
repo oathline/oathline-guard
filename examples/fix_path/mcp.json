@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "fs": {
+      "command": "oathline-guard",
+      "args": ["run", "--server", "fs", "--reads", "/path/to/fix_path/reads-fs.json", "--human", "saroj",
+               "--", "python", "/path/to/fix_path/fix_fs.py", "--root", "/path/to/site"]
+    },
+    "git": {
+      "command": "oathline-guard",
+      "args": ["run", "--server", "git", "--reads", "/path/to/fix_path/reads-git.json", "--human", "saroj",
+               "--", "python", "/path/to/fix_path/fix_git.py", "--repo", "/path/to/site", "--base", "main", "--remote", "origin"],
+      "env": {
+        "FIX_PR_API": "https://api.github.com/repos/OWNER/REPO/pulls",
+        "FIX_PR_TOKEN": "a fine-grained token for this one repository (contents + pull requests write), set here, never in a prompt",
+        "FIX_GIT_NAME": "SIYA fix session",
+        "FIX_GIT_EMAIL": "siya-fix@nexxtnestgroup.com.au"
+      }
+    }
+  }
+}
