@@ -1,15 +1,15 @@
-"""The Guard process (OATHLINE_GUARD_PLAN sections 2, 3): an MCP server to the client, an MCP client to the real server it starts.
+"""The Guard process: an MCP server to the client, an MCP client to the real server it starts.
 
     python -m oathline_guard run --server NAME [--reads READS.json] [--home DIR] -- <the real server's command ...>
 
 Reads (the OPERATOR's list, never the upstream's readOnlyHint, never the agent) pass to the upstream untouched. Every other tool is
-held: in G2 it is simply not run; from G3 it becomes a heard proposal. No read list = nothing passes. stdout carries JSON-RPC only.
+held: it becomes a heard proposal. No read list = nothing passes. stdout carries JSON-RPC only.
 
-The upstream is read by its own thread (FABLE 16:58 review): a request FROM the upstream (roots/list, sampling, elicitation) is
+The upstream is read by its own thread: a request FROM the upstream (roots/list, sampling, elicitation) is
 answered -32601 at once, never left to deadlock the Guard; a notification is handed to the client as it arrives; a response goes to
 the one call waiting for it. When the upstream's output ends (it died, it closed its stdout while alive, or it wrote what cannot be read), the Guard answers any
 call in flight with the error, kills it and exits 1 within about a second, even with no call in flight, so the client can restart it.
-Limit until G5: no timeout on an upstream call (a hung upstream hangs the serial loop, ping included).
+Limit for now: no timeout on an upstream call (a hung upstream hangs the serial loop, ping included).
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from .record import Record
 
 PENDING_MAX = 1000                                                      # upstream notifications held before the client's first answer
 PASS_METHODS = {"resources/list": "resources", "resources/read": "resources", "resources/templates/list": "resources",
-                "prompts/list": "prompts", "prompts/get": "prompts"}   # reads (plan section 3), passed only if the upstream offers them
+                "prompts/list": "prompts", "prompts/get": "prompts"}   # reads, passed only if the upstream offers them
 
 
 class UpstreamError(Exception):
@@ -40,10 +40,10 @@ class Upstream:
     def __init__(self, argv: list[str], on_notification=None, on_end=None):
         if not argv:
             raise UpstreamError("no upstream command after --")
-        exe = shutil.which(argv[0]) or argv[0]               # FABLE 16:58 nit: `npx` and friends on Windows
+        exe = shutil.which(argv[0]) or argv[0]               # `npx` and friends on Windows
         self.p = subprocess.Popen([exe, *argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None)
         self.stdin = io.TextIOWrapper(self.p.stdin, encoding="utf-8", newline="\n", write_through=True)   # LF only, never CRLF
-        # errors="replace" (FABLE 18:00): a stray undecodable byte makes its line a parse error that _read skips, not the end of
+        # errors="replace": a stray undecodable byte makes its line a parse error that _read skips, not the end of
         # the upstream; valid JSON carrying U+FFFD still parses
         self.stdout = io.TextIOWrapper(self.p.stdout, encoding="utf-8", errors="replace", newline="\n")
         self.lock = threading.Lock()
@@ -128,7 +128,7 @@ class Upstream:
 
 
 def load_reads(path: str | None, server: str) -> frozenset:
-    """The operator's read list (plan section 3). Missing, unreadable or for another server: nothing is a read (fail closed)."""
+    """The operator's read list. Missing, unreadable or for another server: nothing is a read (fail closed)."""
     if not path:
         return frozenset()
     try:
@@ -171,9 +171,9 @@ class Guard:
             self.up.notify("notifications/initialized")
             self.refresh_tools()
             if self.human:
-                self.record.engine()                              # FABLE 19:01: a --human Core refuses stops the Guard at start
+                self.record.engine()                              # a --human Core refuses stops the Guard at start
         except BaseException:
-            self.up.close()                                   # FABLE 17:30 / 18:00 nits: never left running after a failed start
+            self.up.close()                                   # never left running after a failed start
             raise
 
     # ---------------------------------------------------------------- the upstream's side
@@ -185,8 +185,8 @@ class Guard:
         if msg.get("method") == "notifications/tools/list_changed":
             self.tool_names = set()                               # learnt again on next use; a new tool is held: not on the read list
         with self.out_lock:
-            if not self.client_initialized:                       # FABLE 17:30 nit: the client's first answer is its first line
-                if len(self.pending_notes) >= PENDING_MAX:        # FABLE 18:00 nit: bounded; the oldest goes, said once on stderr
+            if not self.client_initialized:                       # the client's first answer is its first line
+                if len(self.pending_notes) >= PENDING_MAX:        # bounded; the oldest goes, said once on stderr
                     self.pending_notes.pop(0)
                     if not self.dropped_notes:
                         print(f"oathline-guard: more than {PENDING_MAX} upstream notifications before the client's first answer; "
@@ -198,7 +198,7 @@ class Guard:
 
     def _upstream_ended(self) -> None:
         """The upstream's output ended (it died, or closed its stdout, or wrote what we cannot read): it can never answer again. An
-        in-flight call answers its error first; then the Guard exits so the client can restart it (FABLE 17:30, R3 residuals)."""
+        in-flight call answers its error first; then the Guard exits so the client can restart it."""
         def finish():
             import time as _t
             _t.sleep(1.0)                                         # let a call that was waiting write its error line
@@ -228,7 +228,7 @@ class Guard:
                 break
         self.tool_names = names
         self.tools = tools
-        if hasattr(self, "record"):                              # every tool not on the read list is a Core capability (G3)
+        if hasattr(self, "record"):                              # every tool not on the read list is a Core capability
             self.record.declare_tools(tools, {n for n in names if n not in self.reads})
 
     def capability(self, tool: str) -> str:
@@ -271,7 +271,7 @@ class Guard:
 
     def tools_call(self, mid, params: dict) -> dict:
         name = params.get("name")
-        if not isinstance(name, str):                            # FABLE 16:58 nit: -32602, not an internal error
+        if not isinstance(name, str):                            # -32602, not an internal error
             return stdio.error(mid, -32602, "the tool name must be a string")
         if name not in self.tool_names:
             self.refresh_tools()
@@ -284,15 +284,15 @@ class Guard:
         return stdio.result(mid, self.held(name, params.get("arguments") or {}))
 
     def _run_upstream(self, tool: str, arguments: dict) -> dict:
-        """Core's executor (G3): the STORED arguments to the real server, once. A protocol error raises (EXECUTE_FAILED)."""
+        """Core's executor: the STORED arguments to the real server, once. A protocol error raises (EXECUTE_FAILED)."""
         r = self.up.call("tools/call", {"name": tool, "arguments": arguments})
-        if "result" not in r:                                    # FABLE 19:01: the upstream's own message, passed back (EXECUTE_FAILED)
+        if "result" not in r:                                    # the upstream's own message, passed back (EXECUTE_FAILED)
             err = r.get("error") or {}
             return stdio.text_result(f"the upstream refused the call: {err.get('message') or err}", is_error=True)
         return r["result"]
 
     def held(self, name: str, arguments: dict) -> dict:
-        """G3: a held call is a Core heard proposal. The agent gets a deferred answer; a retry with the same arguments finds the call,
+        """A held call is a Core heard proposal. The agent gets a deferred answer; a retry with the same arguments finds the call,
         runs it once when the person's yes row is there, and delivers its outcome once; after that the same call is asked again."""
         if not self.human:
             return stdio.text_result(f"Not run: {self.server}/{name} is held by oathline-guard and no person is configured to answer "
@@ -352,7 +352,7 @@ class Guard:
                 resp = self.handle(msg)
             except UpstreamError as exc:
                 self._write(stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32603, f"upstream: {exc}"))
-                if self.up.ended.is_set() or self.up.dead():   # output gone (dead, or alive but mute: FABLE 17:30): never usable again
+                if self.up.ended.is_set() or self.up.dead():   # output gone (dead, or alive but mute): never usable again
                     self.up.kill()
                     print("oathline-guard: the upstream server can no longer answer; exiting", file=sys.stderr)
                     return 1
@@ -361,7 +361,7 @@ class Guard:
                 resp = stdio.error(msg.get("id") if isinstance(msg, dict) else None, -32603, f"internal error: {type(exc).__name__}")
             if resp is not None:
                 self._write(resp)
-            if resp is not None and not self.client_initialized:  # the FIRST answer is out (initialize, or a ping first: FABLE 18:00)
+            if resp is not None and not self.client_initialized:  # the FIRST answer is out (initialize, or a ping first)
                 with self.out_lock:                               # the answer is out: now the held notifications
                     self.client_initialized = True
                     for note in self.pending_notes:
@@ -384,7 +384,7 @@ def run(argv: list[str]) -> int:
     ap.add_argument("--shown-text", action="store_true", help="keep the shown words in the chain (D6; default: their hash only)")
     a = ap.parse_args(ours)
     from .record import server_name_ok
-    if not server_name_ok(a.server):                         # FABLE 19:29 (a): one plain name, no "/", no spaces (shared with approve)
+    if not server_name_ok(a.server):                         # one plain name, no "/", no spaces (shared with approve)
         print(f"oathline-guard: --server {a.server!r} must be one plain name (letters, digits, '_', '.', '-'); it heads the "
               "shown text and names the capabilities", file=sys.stderr)
         return 2
