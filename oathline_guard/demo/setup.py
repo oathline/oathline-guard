@@ -39,6 +39,7 @@ def main(argv: list[str]) -> int:
     print("\n1. Add this to claude_desktop_config.json (Claude Desktop: Settings > Developer > Edit Config), then restart Claude"
           " Desktop:\n")
     print(json.dumps(block, indent=2))
-    print("\n2. In a second terminal, open the approve window and leave it open:\n\n   oathline-guard approve --server db\n")
+    print("\n2. In a second terminal, open the approve window and leave it open:\n\n   oathline-guard approve --server db\n\n"
+          f"   (or, with nothing needed on PATH: {py} -m oathline_guard approve --server db)\n")
     print('3. Ask Claude: "clean up the old database". The reads run; the drop waits for your code in the approve window.')
     return 0
