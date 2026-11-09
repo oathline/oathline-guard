@@ -61,6 +61,7 @@ class Demo(unittest.TestCase):
         self.assertEqual(tail[1:3], ["-m", "oathline_guard.demo.fake_db"])
         self.assertEqual(tail[tail.index("--state") + 1], os.path.join(os.path.abspath(self.dir), "db.json"))
         self.assertIn("oathline-guard approve --server db", p.stdout)
+        self.assertIn(f"{os.path.abspath(sys.executable)} -m oathline_guard approve --server db", p.stdout)   # FABLE 02:00 nit: no PATH needed
         self.assertIn("clean up the old database", p.stdout)
 
     def test_m2_the_printed_block_starts_the_guard(self):
