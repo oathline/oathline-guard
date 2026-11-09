@@ -168,7 +168,7 @@ class FixPath(unittest.TestCase):
     # ------------------------------------------------------------------ W5b / W5c / W5d
     def commit_and_push(self):
         self.held_then_yes(self.fs, "fs", "edit_file", self.edit())
-        _, out, err = self.held_then_yes(self.git, "git", "git_commit", {"branch": "truth-fix", "message": "Say what is true"})
+        _, out, err = self.held_then_yes(self.git, "git", "git_commit", {"branch": "truth-fix", "message": "Say what is true", "files": ["index.html"]})
         self.assertFalse(err, out)
         sha = json.loads(out)["commit"]
         window, out, err = self.held_then_yes(self.git, "git", "git_push", {"branch": "truth-fix", "commit": sha})
@@ -193,7 +193,7 @@ class FixPath(unittest.TestCase):
 
     def test_w5d_a_yes_does_not_carry_to_other_arguments(self):
         self.held_then_yes(self.fs, "fs", "edit_file", self.edit())
-        _, out, _ = self.held_then_yes(self.git, "git", "git_commit", {"branch": "truth-fix", "message": "Say what is true"})
+        _, out, _ = self.held_then_yes(self.git, "git", "git_commit", {"branch": "truth-fix", "message": "Say what is true", "files": ["index.html"]})
         sha = json.loads(out)["commit"]
         first, err = text_of(self.git.tool("git_push", {"branch": "truth-fix", "commit": sha}))
         self.assertTrue(err)
@@ -226,7 +226,7 @@ class FixPath(unittest.TestCase):
     # ------------------------------------------------------------------ W5f
     def test_w5f_base_branch_never_pushed(self):
         self.held_then_yes(self.fs, "fs", "edit_file", self.edit())
-        _, out, _ = self.held_then_yes(self.git, "git", "git_commit", {"branch": "truth-fix", "message": "x"})
+        _, out, _ = self.held_then_yes(self.git, "git", "git_commit", {"branch": "truth-fix", "message": "x", "files": ["index.html"]})
         sha = json.loads(out)["commit"]
         _, out, err = self.held_then_yes(self.git, "git", "git_push", {"branch": "main", "commit": sha})
         self.assertTrue(err, out)
