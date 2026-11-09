@@ -1,4 +1,4 @@
-"""fake-db-mcp: the demo MCP server of the PocketOS quickstart (OATHLINE_GUARD_PLAN section 9). Its whole state is one JSON file:
+"""fake-db-mcp: the demo MCP server of the PocketOS quickstart. Its whole state is one JSON file:
 databases, each with tables and backups. Two reads and two writes; no guard of its own (that is the point).
 
     python -m oathline_guard.demo.fake_db --state PATH

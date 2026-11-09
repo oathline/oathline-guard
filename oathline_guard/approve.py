@@ -1,4 +1,4 @@
-"""`oathline-guard approve`: the person's window (OATHLINE_GUARD_PLAN section 5, as amended after FABLE 15:47; G4, FABLE 20:01).
+"""`oathline-guard approve`: the person's window.
 
     python -m oathline_guard approve --server NAME [--home DIR] [--once]
 
@@ -38,7 +38,7 @@ def _stdin_is_terminal() -> bool:
 
 
 def _can_display(text: str, out) -> bool:
-    """The console can show these exact characters (FABLE 20:01: otherwise it crashes, or shows '??' while SHOWN hashes the text)."""
+    """The console can show these exact characters (otherwise it crashes, or shows '??' while SHOWN hashes the text)."""
     try:
         encoding = out.encoding or "utf-8"
     except AttributeError:                                # a plain StringIO: str in, str out
@@ -53,7 +53,7 @@ def _can_display(text: str, out) -> bool:
 def window(rec: Record, *, ask, out, isatty=None, once: bool = False, poll: float = 1.0, max_rounds=None) -> int:
     """Answer the waiting calls; with once=True those waiting now, then return; max_rounds bounds the loop (tests). -> how many
     calls were answered. `ask(prompt, call) -> str` reads one line from the person; `out` is where the text is printed."""
-    if not (isatty if isatty is not None else _stdin_is_terminal)():   # resolved when called (FABLE 21:17)
+    if not (isatty if isatty is not None else _stdin_is_terminal)():   # resolved when called
         raise NotATerminal("the code must be typed by a person at a terminal; stdin is not one")
     human = rec.human
     answered, rounds = 0, 0
@@ -109,7 +109,7 @@ def window(rec: Record, *, ask, out, isatty=None, once: bool = False, poll: floa
 
 
 def main(argv: list[str]) -> int:
-    if not _stdin_is_terminal():                          # FABLE 20:01 nit: the terminal rule first, before anything is opened
+    if not _stdin_is_terminal():                          # the terminal rule first, before anything is opened
         print("oathline-guard approve: refused: the code must be typed by a person at a terminal; stdin is not one", file=sys.stderr)
         return 2
     ap = argparse.ArgumentParser(prog="oathline-guard approve")
@@ -125,7 +125,7 @@ def main(argv: list[str]) -> int:
         print(f"oathline-guard approve: no guard record for server {a.server!r} in {a.home} (start the guard with --human first)",
               file=sys.stderr)
         return 2
-    # the console's encoding is left as it is (FABLE 20:29): forcing UTF-8 would make _can_display always pass and send UTF-8 bytes
+    # the console's encoding is left as it is: forcing UTF-8 would make _can_display always pass and send UTF-8 bytes
     # to a console that shows something else; a console that cannot encode the text is told so and nothing is SHOWN
     rec = Record(folder, a.server)
     try:

@@ -218,5 +218,20 @@ class K12_QuickstartSkipsWithoutTheAgentRepo(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
 
 
+class K13_NoInternalNotesInThePackage(unittest.TestCase):
+    """STOP 0 item 2 of the launch lines, decided as a comment-only clean-up: the shipped package's comments and docstrings name
+    no reviewer, plan document or build stage. (Commit messages stay as they are: never a rebase.)"""
+
+    def test_k13(self):
+        import glob
+        bad = re.compile(r"FABLE|OATHLINE_GUARD_PLAN|plan sections? \d|\bG[0-9]\b|Local repo only|never pushed|Claude \d{1,2}:\d{2}")
+        hits = []
+        for f in sorted(glob.glob(os.path.join(ROOT, "oathline_guard", "**", "*.py"), recursive=True)):
+            for n, line in enumerate(open(f, encoding="utf-8"), 1):
+                if bad.search(line):
+                    hits.append(f"{os.path.relpath(f, ROOT)}:{n}: {line.strip()[:90]}")
+        self.assertEqual(hits, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-"""The guarded server's Registry for a READER (OATHLINE_GUARD_PLAN section 8): the oathline-agent CLI's `--registry` hook.
+"""The guarded server's Registry for a READER: the oathline-agent CLI's `--registry` hook.
 
     OATHLINE_GUARD_SERVER=db [OATHLINE_GUARD_HOME=~/.oathline-guard] \\
         oathline-agent --audit <home>/db/audit.db --tokens <home>/db/tokens.db --registry oathline_guard.registry:for_server unheard

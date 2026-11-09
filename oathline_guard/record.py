@@ -1,9 +1,9 @@
-"""The Guard's record (OATHLINE_GUARD_PLAN sections 4, 5, 7 as amended after FABLE 15:47): Core 0.2.0's two files (the audit chain and the
+"""The Guard's record: Core 0.2.0's two files (the audit chain and the
 token store) plus the Guard's own table (guard.db), in ~/.oathline-guard/<server>/.
 
 Two sides use it, never the same functions:
   the Guard process  propose(), the retry match, confirm_from_yes() (Core's confirm and the executor: only this process holds the pipe)
-  the human side     text(), show() (the re-hash first), hear(), yes(), no(): what `oathline-guard approve` wraps (G4). It never
+  the human side     text(), show() (the re-hash first), hear(), yes(), no(): what `oathline-guard approve` wraps. It never
                      calls confirm() and never builds an executor.
 
 The words are the Guard's, never the agent's and never the server's description. A single-line value is shown as itself when it is a
@@ -27,17 +27,17 @@ from oathline.capabilities import name_problem
 
 PRODUCT = "oathline-guard"           # the product actor that shows and hears (Core's non-human list matches whole names; not on it)
 AGENT = "agent"                      # the proposing principal: on Core's non-human list, it can never confirm
-TTL_SECONDS = 900                    # a proposal lives 15 minutes (plan section 6)
+TTL_SECONDS = 900                    # a proposal lives 15 minutes
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 LONG_CHARS = 200                     # a string longer than this is a block
 ITEMS_BUDGET = 7000                  # Core's items cap is 8 KB (value + said count): carry the largest by hash until the rest fit
 SHOWN_TEXT_MAX = 16000               # Core shows at most 16,384 characters; a call whose text would be longer is refused at proposal
 GUTTER = "| "
 END_MARK = "--- end of {key} ---"
-KEY_RX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")   # FABLE 19:01: no leading "_" (the run drops "_" keys as Core's own)
+KEY_RX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")   # no leading "_" (the run drops "_" keys as Core's own)
 RESERVED = ("code", "tool")                            # the Guard's own lines and items
 CARRIED_ITEM_BYTES = 200                               # a carried item in Core's items text, measured with oathline.tokens.items_text
-                                                       # (196 bytes for a 3-character key), plus its key twice; FABLE 19:01
+                                                       # (196 bytes for a 3-character key), plus its key twice
 
 
 def _json(v) -> str:
@@ -61,7 +61,7 @@ def _plain(v) -> bool:
 
 
 def _escape_unprintable(text: str) -> str:
-    """Every character that is not printable as its escape (FABLE 19:01: json.dumps leaves U+0085, U+2028, U+2029 raw, and a terminal
+    """Every character that is not printable as its escape (json.dumps leaves U+0085, U+2028, U+2029 raw, and a terminal
     may break a line on them)."""
     out = []
     for ch in text:
@@ -84,7 +84,7 @@ def one_line(v) -> str:
 
 
 def server_name_ok(name) -> bool:
-    """One plain name for a guarded server (FABLE 19:29 / 20:01): it heads the shown text ('<server> / <tool>'), names the
+    """One plain name for a guarded server: it heads the shown text ('<server> / <tool>'), names the
     capabilities (mcp/<server>/<tool>) and a folder under --home, so no '/', no spaces, no leading '.'. The run side and the approve
     window both use this rule."""
     if not isinstance(name, str) or not 1 <= len(name) <= 64 or not (name[0].isascii() and name[0].isalnum()):
@@ -142,7 +142,7 @@ class Record:
             name = t.get("name")
             if name not in gated:
                 continue
-            if name_problem(self.capability(str(name))):        # FABLE 19:01: a name Core cannot hold is never a capability
+            if name_problem(self.capability(str(name))):        # a name Core cannot hold is never a capability
                 print(f"oathline-guard: tool {name!r} has a name Core cannot use; it is held and cannot be asked", file=sys.stderr)
                 continue
             props = sorted(((t.get("inputSchema") or {}).get("properties") or {}).keys())
@@ -262,7 +262,7 @@ class Record:
         return self._row(call)["code"]
 
     def expire_due(self) -> list[str]:
-        """Resolve every pending call past its lifetime as expired (FABLE 20:01: never shown, its code never printed). -> the calls."""
+        """Resolve every pending call past its lifetime as expired (never shown, its code never printed). -> the calls."""
         due = [c for (c, created) in self.db.execute("SELECT call, created FROM calls WHERE status='pending'")
                if self.clock() > created + TTL_SECONDS]
         for c in due:
@@ -298,7 +298,7 @@ class Record:
         if isinstance(planned, str):
             return {"ok": False, "error": planned}
         core_args, items = planned
-        if len(self._compose(items, args, "XXXX")) > SHOWN_TEXT_MAX:   # FABLE 19:01: decided BEFORE Core: no proposal, no live token
+        if len(self._compose(items, args, "XXXX")) > SHOWN_TEXT_MAX:   # decided BEFORE Core: no proposal, no live token
             return {"ok": False, "error": f"text_too_large: the call would show more than {SHOWN_TEXT_MAX} characters; split it"}
         call = "c-" + secrets.token_hex(4)
         core_args["_call"] = call                                # the action names its call (part of its integrity; stripped to run)
@@ -333,8 +333,8 @@ class Record:
 
     def yes(self, call: str, code_typed: str, human: str) -> bool:
         """The person's yes as a ROW (never confirm(): the Guard process confirms from it). A wrong code is NOT an answer: nothing is
-        stored and the call stays pending (FABLE 19:01); the approver check compares it again. The first answer stands. The row keeps
-        the CALL's code, which the typed code equalled after trimming and upper-casing (FABLE 19:29 (b)): the row proves it was typed."""
+        stored and the call stays pending; the approver check compares it again. The first answer stands. The row keeps
+        the CALL's code, which the typed code equalled after trimming and upper-casing: the row proves it was typed."""
         try:
             row = self._row(call)
         except KeyError:
@@ -347,9 +347,9 @@ class Record:
 
     def no(self, call: str, human: str) -> None:
         """The person's no: a RECORDED outcome (guard.db), and the Guard's own event REFUSED_BY_HUMAN on Core's chain beside SHOWN and
-        HEARD (FABLE 20:29: so Core's why() for the token says the person refused it); any later yes is too late.
+        HEARD (so Core's why() for the token says the person refused it); any later yes is too late.
         REFUSED_BY_HUMAN is the Guard's OWN event type, appended with AuditLog.append because Core has no verb for a product's
-        refusal; Core's readers treat an event type they do not know as data (FABLE 21:17). It is written only while the call is
+        refusal; Core's readers treat an event type they do not know as data. It is written only while the call is
         still pending (an expiry between the showing and the typed n writes nothing for the expired token), and names the call and the
         channel as SHOWN and HEARD do."""
         row = self._row(call)
@@ -404,10 +404,10 @@ class Record:
 
     def confirm_from_yes(self, call: str) -> dict:
         """The Guard process: when a yes row exists, Core's confirm with that row as proof; the executor runs the stored arguments."""
-        if self._executor is None:                              # FABLE 19:01: the human side cannot confirm (nothing confirmed or burned)
+        if self._executor is None:                              # the human side cannot confirm (nothing confirmed or burned)
             return {"ok": False, "error": "not_the_guard_process"}
         row = self._row(call)
-        if row["status"] == "pending" and self._expired(row):    # FABLE 20:29 nit: safe on its own, not only behind match()
+        if row["status"] == "pending" and self._expired(row):    # safe on its own, not only behind match()
             self._resolve(call, "expired", {"state": "expired"})
             return {"ok": False, "error": "expired"}
         ans = self.answer(call)
