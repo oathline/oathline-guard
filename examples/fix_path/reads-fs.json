@@ -1,0 +1,1 @@
+{"server": "fs", "reads": ["read_file", "list_directory"]}
