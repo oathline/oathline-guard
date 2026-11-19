@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oathline-guard"
-version = "0.1.0"
+version = "0.2.0"
 description = "An MCP guard where an AI agent's yes means exactly what the person saw: reads pass, every other tool call waits for a coded yes in a second terminal, runs once, and is recorded in Oathline's hash-chained log."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Nexxt Nest Group Pty Ltd" }]
 requires-python = ">=3.10"
-dependencies = ["oathline>=0.2.0,<0.3"]
+dependencies = ["oathline>=0.3.0,<0.4"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",

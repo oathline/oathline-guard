@@ -14,6 +14,10 @@
   K7 the README's approve-window block is the window's own output: the lines of the example's real run, the code aside
   K8 the tests use the installed Core (PyPI 0.2.x), not a path: tests/_core.py no longer reads OATHLINE_CORE_PATH
   K9 the sdist leaves tests and examples out (MANIFEST.in prunes them) and ships the README, LICENSE and the package
+  K14 (0.2.0, FABLE 19:06 Thu 12 Nov) the words say what 0.2.0 does: the README names `oathline-guard log --server` in its record
+      section; CHANGELOG 0.2.0 and RELEASE_NOTES_0.2.0 say long values are Core 0.3.0 block items (Core checks the block:
+      carried_hash_mismatch) and no longer say the Guard re-hashes them or that nothing else changed; the package's docstrings
+      no longer say the approve side re-hashes the block
 """
 import json
 import os
@@ -56,7 +60,7 @@ class K1_Pyproject(unittest.TestCase):
         p = pyproject()["project"]
         self.assertEqual(p["name"], "oathline-guard")
         self.assertEqual(p["requires-python"], ">=3.10")
-        self.assertEqual(p["dependencies"], ["oathline>=0.2.0,<0.3"])
+        self.assertEqual(p["dependencies"], ["oathline>=0.3.0,<0.4"])
         self.assertEqual(p["scripts"], {"oathline-guard": "oathline_guard.__main__:main"})
         self.assertEqual(p["license"], "MIT")
         self.assertEqual(p["license-files"], ["LICENSE"])
@@ -67,7 +71,7 @@ class K2_OneVersion(unittest.TestCase):
     def test_k2(self):
         import oathline_guard
         v = pyproject()["project"]["version"]
-        self.assertEqual(v, "0.1.0")
+        self.assertEqual(v, "0.2.0")
         self.assertEqual(oathline_guard.__version__, v)
         s = server_json()
         self.assertEqual(s["version"], v)
@@ -137,14 +141,15 @@ class K6_QuickstartIsReal(unittest.TestCase):
         named = set(re.findall(r"(?m)^oathline-guard (\w+)", code)) | set(re.findall(r"`oathline-guard (\w+)", text))
         self.assertTrue(named)
         for cmd in named:
-            self.assertIn(cmd, ("run", "approve", "demo"), cmd)
+            self.assertIn(cmd, ("run", "approve", "demo", "log"), cmd)      # log: 0.2.0
         self.assertEqual(main(["--help"]), 0)
 
 
 class K7_WindowBlockIsReal(unittest.TestCase):
     def test_k7(self):
         p = subprocess.run([sys.executable, os.path.join(ROOT, "examples", "stop_the_delete.py")], capture_output=True, text=True,
-                           encoding="utf-8", cwd=ROOT, timeout=120, env={**os.environ, "PYTHONUTF8": "1"})
+                           encoding="utf-8", cwd=ROOT, timeout=120,
+                           env={**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": os.pathsep.join([ROOT, *_core.CORE_PATHS])})
         self.assertEqual(p.returncode, 0, p.stderr)
         real = [ln.strip() for ln in p.stdout.splitlines()]
         blocks = [b for b in readme_blocks("text") if "db / drop_database" in b]
@@ -156,11 +161,40 @@ class K7_WindowBlockIsReal(unittest.TestCase):
                 self.assertIn(mask(ln.strip()), real_masked, ln)
 
 
+def _core_030_from_pypi() -> bool:
+    import oathline
+    return oathline.__version__.startswith("0.3.") and "site-packages" in oathline.__file__.replace("\\", "/")
+
+
+class K15_ReadmeRecordLimits(unittest.TestCase):
+    """FABLE 00:35 (the stranger test): Guard must-fix 1, the PR #210 point and Core's anchor recipe on the Guard's own record; must-fix 2,
+    the log example must print the first event (no `--since 0`); notes: how long a held call waits, what a new guard does after a no,
+    and (after the R3a fix, Claude 02:55 Sat 14 Nov) what the Guard does when the upstream goes quiet: it fails closed and kills the
+    upstream's whole process tree, under a venv too."""
+    def test_k15(self):
+        text = read("README.md")
+        self.assertIn("does not stop someone who can write", text)
+        self.assertIn("python -m oathline anchor --store ~/.oathline-guard/db/audit.db", text)
+        self.assertIn("--expected-head", text)
+        self.assertIn("--anchor-seq", text)
+        self.assertNotIn("--since 0 --verify", text)
+        self.assertIn("oathline-guard log --server db --verify", text)
+        self.assertIn("15 minutes", text)
+        self.assertIn("a NEW guard process", text)
+        self.assertNotIn("the call hangs until the upstream exits", text)     # R3a fixed (Claude 02:55): no longer a limit
+        self.assertIn("its whole process tree", text)
+        self.assertIn("an upstream that dies is noticed however it was started; one that closes its output while it keeps running "
+                      "is noticed when started directly or as a venv's python.exe, and behind another wrapper (npx, a .cmd, a "
+                      "console-script .exe) only when it exits: there is no timeout yet", " ".join(text.split()))
+
+
+@unittest.skipUnless(_core_030_from_pypi(), "Core 0.3.0 is not on PyPI yet: K8 must pass (and tests/_core.py lose its path) before "
+                     "this branch is released")
 class K8_CoreFromPyPI(unittest.TestCase):
     def test_k8(self):
         self.assertNotIn("OATHLINE_CORE_PATH", read(os.path.join("tests", "_core.py")))
         import oathline
-        self.assertTrue(oathline.__version__.startswith("0.2."), oathline.__version__)
+        self.assertTrue(oathline.__version__.startswith("0.3."), oathline.__version__)
         self.assertIn("site-packages", oathline.__file__.replace("\\", "/"))
 
 
@@ -231,6 +265,37 @@ class K13_NoInternalNotesInThePackage(unittest.TestCase):
                 if bad.search(line):
                     hits.append(f"{os.path.relpath(f, ROOT)}:{n}: {line.strip()[:90]}")
         self.assertEqual(hits, [])
+
+
+class K14_TheWordsSayWhat020Does(unittest.TestCase):
+    def section(self, text, start, stop):
+        i = text.index(start)
+        j = text.index(stop, i + len(start))
+        return text[i:j]
+
+    def test_k14_readme_names_log(self):
+        record = self.section(read("README.md"), "## The record", "## Licence")
+        self.assertIn("oathline-guard log --server", record)
+        self.assertIn("--verify", record)
+
+    def test_k14_changelog(self):
+        entry = self.section(read("CHANGELOG.md"), "## 0.2.0", "## 0.1.0")
+        flat = " ".join(entry.split())
+        self.assertIn("block", flat)
+        self.assertIn("carried_hash_mismatch", flat)
+        self.assertNotIn("re-hashed by the approve side", flat)
+        self.assertNotIn("keeps its own binding", flat)
+
+    def test_k14_release_notes(self):
+        flat = " ".join(read("RELEASE_NOTES_0.2.0.md").split())
+        self.assertNotIn("Nothing else changed", flat)
+        self.assertIn("carried_hash_mismatch", flat)
+        self.assertIn("shown_body_differs", flat)
+
+    def test_k14_docstrings(self):
+        for name in ("record.py", "approve.py"):
+            flat = " ".join(read(os.path.join("oathline_guard", name)).split())
+            self.assertNotIn("re-hashes the block", flat, name)
 
 
 if __name__ == "__main__":

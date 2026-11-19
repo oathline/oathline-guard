@@ -85,6 +85,9 @@ always wait, whatever the server's own annotations (`readOnlyHint`) say.
   8 KB cap on a call's items. A call beyond either is refused before anything is shown (`text_too_large`, `items_too_large`):
   split it.
 - The yes runs the stored arguments exactly once. A wrong code decides nothing; a no is recorded, and a later yes is too late.
+  A held call waits 15 minutes for its yes (the agent is told "expires HH:MM"); after that it is a new request. After a no, the
+  same call asked of the same guard is answered "the person said no"; asked of a NEW guard process, it is a new request and is
+  shown again.
 - The approve window reads only from a terminal: an agent's shell tool cannot pipe the code in.
 
 Limits, said plainly:
@@ -92,9 +95,15 @@ Limits, said plainly:
 - **A pseudo-terminal passes the terminal check.** It stops a pipe, not a determined local process with a pty.
 - **An agent with a raw shell or a raw token goes around any MCP guard.** The guard governs the calls that pass through it;
   switch off the client's own write tools for the session if the guard must be the only way to act.
-- **No timeout on an upstream call yet**, and the agent retries after the yes (no waiting notification yet). On Windows, when
-  the upstream is started through a virtual environment's `python.exe` (a launcher that holds the pipes), an upstream that
-  closes its output but keeps running is noticed only when it exits.
+- **No timeout on an upstream call yet**, and the agent retries after the yes (no waiting notification yet). When the guard
+  notices that an upstream has ended, the call in flight answers an error, the guard kills the upstream and its whole process tree
+  and exits 1, so the client can restart it. What it notices: an upstream that dies is noticed however it was started; one that
+  closes its output while it keeps running is noticed when started directly or as a venv's python.exe, and behind another wrapper
+  (npx, a .cmd, a console-script .exe) only when it exits: there is no timeout yet. An upstream that stays connected but never
+  answers waits.
+- **The record proves edits, not a rewrite.** A hash chain detects edits; it does not stop someone who can write
+  `~/.oathline-guard/<server>/` from rewriting the record and recomputing every hash. To catch that, keep the head outside the
+  machine (see **The record** below).
 - **stdio servers only**; one person per guarded server; the terminal is the only approval channel.
 - **Secret arguments are not masked yet**: a secret in an argument is shown in the window.
 - **Heard is not understood:** the record proves the words were shown and answered, not that they were read.
@@ -104,6 +113,28 @@ Limits, said plainly:
 Each guarded server keeps its own folder (default `~/.oathline-guard/<server>/`) with Oathline Core's audit chain and token
 store. The chain for one call reads `REQUEST AUTHORIZED PROPOSED_BY_AGENT SHOWN HEARD CONFIRMED_BY_HUMAN EXECUTING EXECUTED`, or
 ends at `REFUSED_BY_HUMAN`; `verify()` on the audit log checks every link.
+
+A hash chain detects edits; it does not stop someone who can write `~/.oathline-guard/<server>/` from rewriting the record and
+recomputing every hash. To catch that, keep the head outside the machine, with Oathline Core's own commands:
+
+```
+python -m oathline anchor --store ~/.oathline-guard/db/audit.db
+python -m oathline verify --store ~/.oathline-guard/db/audit.db --expected-head <head> --anchor-seq <seq>
+```
+
+The first prints the `head` and `seq` to keep somewhere the record's writer cannot reach; the second, later, exits 1 if the record
+was cut short or rewritten up to that event. An anchor proves the past up to its `seq`, nothing after it.
+
+To read it, `oathline-guard log --server db` prints the server's events as JSON lines; `--since N` starts after event N, and
+`--verify` also checks that part of the chain (exit 1 when it does not hold). It only reads: it never creates or writes a record.
+
+```
+oathline-guard log --server db --verify
+```
+
+## Who built it
+
+Built by Saroj Sanjel with AI coding agents: every change test-first, independently reviewed, approved by a human before release.
 
 ## Licence
 

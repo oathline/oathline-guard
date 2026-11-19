@@ -81,7 +81,7 @@ class PocketOSQuickstart(unittest.TestCase):
             if os.environ.get("OATHLINE_REQUIRE_AGENT") == "1":      # our own runs: absent is a failure (FABLE 20:29)
                 self.fail(why)
             self.skipTest(why)                                       # a stranger's clone: a skip with the reason (FABLE 10:16)
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join([AGENT_REPO, _core.ROOT]), PYTHONIOENCODING="utf-8",
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([AGENT_REPO, _core.ROOT, *_core.CORE_PATHS]), PYTHONIOENCODING="utf-8",
                    OATHLINE_GUARD_HOME=self.home, OATHLINE_GUARD_SERVER="db")
         folder = os.path.join(self.home, "db")
         p = subprocess.run([sys.executable, "-m", "oathline_agent", "--audit", os.path.join(folder, "audit.db"), "--tokens",
@@ -159,7 +159,7 @@ class PocketOSQuickstart(unittest.TestCase):
 
 class TheExample(unittest.TestCase):
     def test_examples_stop_the_delete_runs(self):
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join([_core.ROOT]), PYTHONIOENCODING="utf-8")
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([_core.ROOT, *_core.CORE_PATHS]), PYTHONIOENCODING="utf-8")
         p = subprocess.run([sys.executable, os.path.join(_core.ROOT, "examples", "stop_the_delete.py")], capture_output=True,
                            text=True, encoding="utf-8", env=env, timeout=180, cwd=_core.ROOT)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)

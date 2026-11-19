@@ -11,7 +11,7 @@ from tests import _core
 
 
 def env(extra_path=()):
-    return dict(os.environ, PYTHONPATH=os.pathsep.join([_core.ROOT, *extra_path]), PYTHONIOENCODING="utf-8")
+    return dict(os.environ, PYTHONPATH=os.pathsep.join([_core.ROOT, *extra_path, *_core.CORE_PATHS]), PYTHONIOENCODING="utf-8")
 
 
 class Client:

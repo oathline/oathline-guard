@@ -8,6 +8,8 @@ MODE:
   dies     answers initialize and tools/list, then exits on the first tools/call
   early    like grows, but sends list_changed BEFORE its tools/call answer (the client must see it first: "as it arrives")
   mute     on the first tools/call closes its stdout and stays alive (FABLE 17:30, R3 residual a)
+  spawner  as mute, but first starts a child process of its own that sleeps (R3d: the Guard must kill the whole tree)
+  mutequick closes its stdout on the first tools/call, lives 5 seconds more, then exits (R3e: behind a wrapper)
   chatty   sends a log notification right after its own initialize answer, before the client has initialized the Guard
   badbyte  right after its initialize answer writes one line that is not UTF-8 (a stray log byte), then serves normally
   protoerr tools/call of write_b answers a JSON-RPC error {"code": -32000, "message": "disk full"} (not a tool result)
@@ -89,7 +91,18 @@ def main(mode):
         elif method == "tools/call":
             if mode == "dies":
                 sys.exit(3)
-            if mode == "mute":
+            if mode == "mutequick":                         # R3e: closes its output, lives 5 s more, then exits
+                sys.stdout.flush()
+                os.close(1)
+                time.sleep(5)
+                os._exit(0)
+            if mode in ("mute", "spawner"):
+                log({"pid": os.getpid()})                       # R3c / R3d: the test checks this process is gone afterwards
+                if mode == "spawner":                           # a child of its own, as a wrapper (npx, a .cmd) would have
+                    import subprocess
+                    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    log({"child_pid": child.pid})
                 sys.stdout.flush()
                 os.close(1)
                 time.sleep(60)

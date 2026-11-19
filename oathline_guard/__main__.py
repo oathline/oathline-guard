@@ -5,6 +5,7 @@ USAGE = ("usage: oathline-guard run --server NAME [--reads READS.json] [--home D
          "-- <server command ...>\n"
          "       oathline-guard approve --server NAME [--home DIR] [--once]\n"
          "       oathline-guard demo [--dir DIR] [--human NAME]   (prepares the quickstart; approves and runs nothing)\n"
+         "       oathline-guard log --server NAME [--home DIR] [--since N] [--verify]   (reads the record; read-only)\n"
          "       (or python -m oathline_guard ...)")
 
 
@@ -20,6 +21,9 @@ def main(argv=None) -> int:
     if cmd == "approve":
         from .approve import main as approve_main
         return approve_main(rest)
+    if cmd == "log":
+        from .log import main as log_main
+        return log_main(rest)
     if cmd == "demo":
         from .demo.setup import main as demo_main
         return demo_main(rest)

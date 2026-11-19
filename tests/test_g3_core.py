@@ -195,7 +195,7 @@ class T11_ReHash(G3Case):
         call = rec.pending()[0]["call"]
         good = rec.text(call)
         bad = good.replace("| line two", "| line TWO")
-        self.assertEqual(rec.show(call, bad).get("error"), "shown_body_differs")
+        self.assertEqual(rec.show(call, bad).get("error"), "carried_hash_mismatch")   # Core 0.3.0's block check (was the Guard's own)
         self.assertEqual(self.events("SHOWN"), [])
         self.assertTrue(rec.show(call, good).get("ok"))
 

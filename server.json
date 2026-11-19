@@ -3,7 +3,7 @@
   "name": "io.github.oathline/oathline-guard",
   "title": "Oathline Guard",
   "description": "Wraps a stdio MCP server: reads pass, every other tool call waits for a person's coded yes.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "repository": {
     "url": "https://github.com/oathline/oathline-guard",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "oathline-guard",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

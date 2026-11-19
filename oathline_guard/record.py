@@ -9,7 +9,7 @@ Two sides use it, never the same functions:
 The words are the Guard's, never the agent's and never the server's description. A single-line value is shown as itself when it is a
 plain string (printable, no edge spaces) and otherwise as its JSON literal, so a value can never write a line of its own. A long or
 multi-line value is carried in Core by its hash, {"sha256", "chars"}, with a short `said`, and shown WHOLE as a block whose every line
-starts with "| " (a gate line never does), closed by "--- end of <key> ---"; the human side re-hashes the block before Core's show().
+starts with "| " (a gate line never does), closed by "--- end of <key> ---": a Core `block` item, which Core's show() checks.
 """
 from __future__ import annotations
 
@@ -101,7 +101,8 @@ def build_registry(server: str, caps: list, human: str) -> Registry:
     oathline-agent reader (oathline_guard.registry:for_server) all build it here, so they cannot drift apart."""
     return Registry([Capability(c, frozenset({AGENT, human}) if human else frozenset({AGENT}), writes=True, needs_confirmation=True,
                                 approvers=frozenset({human}) if human else frozenset(), heard=True, products=frozenset({PRODUCT}),
-                                screen_keys=frozenset(keys), description=f"the MCP tool {tool} on {server}, run once after a heard yes")
+                                screen_keys=frozenset(keys), block_keys=frozenset(keys),   # Core 0.3.0: a long value is a block
+                                description=f"the MCP tool {tool} on {server}, run once after a heard yes")
                      for c, tool, keys in caps])
 
 
@@ -209,7 +210,7 @@ class Record:
             if k in blocks:
                 carried = {"sha256": _sha(_text(v)), "chars": len(_text(v))}
                 core_args[k] = carried
-                items.append({"key": k, "value": carried, "shown_as": "screen", "label": k})
+                items.append({"key": k, "value": carried, "carried": "block", "label": k})   # Core 0.3.0 checks the shown block
             else:
                 core_args[k] = v
                 items.append({"key": k, "value": v, "label": k})
@@ -227,7 +228,7 @@ class Record:
             k = it["key"]
             if k == "tool":
                 lines.insert(0, str(it.get("said") or self._render(k, it.get("value"))))
-            elif it.get("shown_as") == "screen":
+            elif it.get("carried") == "block" or it.get("shown_as") == "screen":
                 lines.append(f"{k}:")
                 lines += [GUTTER + ln for ln in _text(arguments[k]).split("\n")]
                 lines.append(END_MARK.format(key=k))
@@ -235,19 +236,6 @@ class Record:
                 lines.append(f"{k}: {it.get('said') or self._render(k, it.get('value'))}")
         lines.append(f"code: {code}")
         return "\n".join(lines)
-
-    @staticmethod
-    def block(text: str, key: str) -> str | None:
-        lines = str(text or "").split("\n")
-        try:
-            start = lines.index(f"{key}:")
-            end = lines.index(END_MARK.format(key=key), start + 1)
-        except ValueError:
-            return None
-        body = lines[start + 1:end]
-        if any(not ln.startswith(GUTTER) for ln in body):
-            return None
-        return "\n".join(ln[len(GUTTER):] for ln in body)
 
     # ---------------------------------------------------------------- the Guard process: proposals
     def _row(self, call: str) -> dict:
@@ -318,14 +306,9 @@ class Record:
 
     # ---------------------------------------------------------------- the human side (what `approve` wraps)
     def show(self, call: str, text: str) -> dict:
-        """The product's statement of the exact text shown. Every block must hash to its item first (Core checks a block by label only)."""
+        """The product's statement of the exact text shown. Core 0.3.0 checks every block itself (carried "block": the shown block's
+        SHA-256 and length against the argument), so the Guard no longer re-hashes it here."""
         row = self._row(call)
-        rec = self.engine().tokens.get(row["token"]) or {}
-        for it in rec.get("items") or []:
-            if it.get("shown_as") == "screen" and _carried(it.get("value")):
-                b = self.block(text, it["key"])
-                if b is None or _sha(b) != it["value"]["sha256"]:
-                    return {"ok": False, "error": "shown_body_differs", "key": it["key"]}
         return self.engine().show(PRODUCT, row["token"], str(text), channel="screen")
 
     def hear(self, call: str) -> dict:

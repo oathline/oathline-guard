@@ -3,7 +3,7 @@
     python -m oathline_guard approve --server NAME [--home DIR] [--once]
 
 For each call waiting for a yes it prints the Guard's own text (the tool, every argument in the Guard's words, long values whole
-behind "| ", the code last), re-hashes the blocks and records SHOWN, then takes what the person types: the right code is the yes
+behind "| ", the code last) and records SHOWN (Core checks each block), then takes what the person types: the right code is the yes
 ROW, `n` is a RECORDED no, a wrong code decides nothing and asks again. HEARD is recorded on the first answer typed, whatever it is
 (a wrong code or `n` included): the person demonstrably had the text in front of them; nothing else is written on a wrong code.
 It never confirms and never runs anything: the Guard process, which holds the server's pipe, runs the call on the agent's next

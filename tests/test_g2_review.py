@@ -111,12 +111,84 @@ class R4b_AsItArrives(ReviewCase):
         self.assertIn("notifications/tools/list_changed", [n.get("method") for n in g.notifications])
 
 
+def alive(pid: int) -> bool:
+    """Is process `pid` still running? Never signals it (on Windows os.kill would TERMINATE it)."""
+    if sys.platform == "win32":
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, int(pid))              # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        try:
+            k.GetExitCodeProcess(h, ctypes.byref(code))
+            return code.value == 259                            # STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+def gone_within(pid: int, seconds: float) -> bool:
+    import time
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if not alive(pid):
+            return True
+        time.sleep(0.2)
+    return not alive(pid)
+
+
 class R3a_UpstreamGoesMute(ReviewCase):
+    """Claude 02:55 Sat 14 Nov ("fix it", time-boxed): the Guard fails closed under a Windows venv AND a base interpreter. The tests
+    run under whatever python runs them; the venv run and the base run are both required before the fix is accepted."""
     def test_r3a_closed_output_alive_process(self):
         g = self.guard("mute", ["read_a"])
         g.start()
         self.assertIn("error", g.tool("read_a"))
         self.assertEqual(g.p.wait(timeout=15), 1)            # not a zombie: the upstream's output is gone, the Guard exits
+
+    def test_r3c_the_mute_upstream_itself_is_killed(self):
+        g = self.guard("mute", ["read_a"])
+        g.start()
+        self.assertIn("error", g.tool("read_a"))
+        self.assertEqual(g.p.wait(timeout=15), 1)
+        pids = [e["pid"] for e in self.upstream_log() if "pid" in e]
+        self.assertEqual(len(pids), 1, self.upstream_log())
+        self.assertTrue(gone_within(pids[0], 10), f"the upstream process {pids[0]} outlived the Guard")
+
+    def test_r3d_the_upstream_tree_is_killed(self):
+        g = self.guard("spawner", ["read_a"])
+        g.start()
+        self.assertIn("error", g.tool("read_a"))
+        self.assertEqual(g.p.wait(timeout=15), 1)
+        kids = [e["child_pid"] for e in self.upstream_log() if "child_pid" in e]
+        self.assertEqual(len(kids), 1, self.upstream_log())
+        self.assertTrue(gone_within(kids[0], 10), f"the upstream's own child {kids[0]} outlived the Guard")
+
+
+@unittest.skipUnless(sys.platform == "win32", "the wrapper shape is cmd /c (npx.cmd, a .bat) on Windows")
+class R3e_MuteBehindAWrapper(ReviewCase):
+    """FABLE 03:52: the behaviour AS IT IS, so the README and the code cannot drift apart. Behind a wrapper (cmd /c: the shape of
+    npx.cmd, any .cmd or .bat), an upstream that closes its output while it keeps running is NOT noticed until it exits; then the
+    call answers its error, the Guard exits 1 and nothing of the tree is left."""
+    def test_r3e(self):
+        import time
+        path = os.path.join(self.root, "reads.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"server": "up", "reads": ["read_a"]}, fh)
+        argv = [sys.executable, "-m", "oathline_guard", "run", "--server", "up", "--reads", path, "--home",
+                os.path.join(self.root, "home"), "--", "cmd", "/c", sys.executable, "-m", "tests.fake_upstreams", "mutequick"]
+        g = Client(argv, extra_env={"FAKE_LOG": os.path.join(self.root, "upstream.log")})
+        self.addCleanup(g.close)
+        g.start()
+        t0 = time.monotonic()
+        self.assertIn("error", g.tool("read_a"))
+        self.assertGreaterEqual(time.monotonic() - t0, 3.0)        # it waited for the upstream to exit
+        self.assertEqual(g.p.wait(timeout=15), 1)
 
 
 class R3b_UpstreamDiesIdle(ReviewCase):

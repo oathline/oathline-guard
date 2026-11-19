@@ -34,14 +34,50 @@ class UpstreamError(Exception):
     pass
 
 
+def _venv_base(exe: str) -> tuple[str, dict] | None:
+    """Windows only: when `exe` is a virtual environment's python.exe (a LAUNCHER that starts the real interpreter as its child and
+    keeps the pipes open), the real interpreter and the one variable that makes it run inside that venv, exactly as CPython's own
+    multiprocessing does on Windows (sys._base_executable + __PYVENV_LAUNCHER__). Without this, an upstream that closes its output
+    is never seen to (the launcher still holds the pipe) and a kill reaches the launcher only. None: not a venv launcher."""
+    if sys.platform != "win32" or not exe:
+        return None
+    name = os.path.basename(exe).lower()
+    if name not in ("python.exe", "pythonw.exe"):
+        return None
+    cfg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(exe))), "pyvenv.cfg")
+    if not os.path.isfile(cfg):
+        return None
+    keys = {}
+    try:
+        with open(cfg, encoding="utf-8") as fh:
+            for ln in fh:
+                k, sep, v = ln.partition("=")
+                if sep:
+                    keys[k.strip().lower()] = v.strip()
+    except OSError:
+        return None
+    base = keys.get("executable") or (os.path.join(keys["home"], name) if keys.get("home") else "")
+    if not base or not os.path.isfile(base) or os.path.normcase(os.path.abspath(base)) == os.path.normcase(os.path.abspath(exe)):
+        return None
+    return base, {"__PYVENV_LAUNCHER__": os.path.abspath(exe)}
+
+
 class Upstream:
-    """The real MCP server, spawned with its own command; spoken to over its stdio (LF only, UTF-8), read by its own thread."""
+    """The real MCP server, spawned with its own command; spoken to over its stdio (LF only, UTF-8), read by its own thread.
+    A venv python.exe is started as its real interpreter (`_venv_base`), and a kill ends the upstream's whole process tree
+    (Windows: taskkill /T; elsewhere: its own process group), so the Guard fails closed either way."""
 
     def __init__(self, argv: list[str], on_notification=None, on_end=None):
         if not argv:
             raise UpstreamError("no upstream command after --")
         exe = shutil.which(argv[0]) or argv[0]               # `npx` and friends on Windows
-        self.p = subprocess.Popen([exe, *argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None)
+        env = None
+        base = _venv_base(exe)
+        if base:
+            exe, extra = base
+            env = {**os.environ, **extra}
+        kw = {"start_new_session": True} if os.name == "posix" else {}
+        self.p = subprocess.Popen([exe, *argv[1:]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None, env=env, **kw)
         self.stdin = io.TextIOWrapper(self.p.stdin, encoding="utf-8", newline="\n", write_through=True)   # LF only, never CRLF
         # errors="replace": a stray undecodable byte makes its line a parse error that _read skips, not the end of
         # the upstream; valid JSON carrying U+FFFD still parses
@@ -104,6 +140,17 @@ class Upstream:
         self._send({"jsonrpc": "2.0", "method": method, **({"params": params} if params is not None else {})})
 
     def kill(self) -> None:
+        """The upstream and every process it started (a wrapper's child must not outlive it)."""
+        try:
+            if sys.platform == "win32":
+                if self.p.poll() is None:
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.p.pid)], stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=10, check=False)
+            else:                                          # the group may outlive its leader: killed whether or not it exited
+                import signal
+                os.killpg(self.p.pid, signal.SIGKILL)
+        except Exception:  # noqa: BLE001  (ProcessLookupError: the group is gone; the plain kill below still runs)
+            pass
         try:
             self.p.kill()
         except Exception:  # noqa: BLE001
